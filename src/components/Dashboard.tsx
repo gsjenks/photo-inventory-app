@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
+import { supabase } from '../lib/supabase';
+import type { Sale, Contact, Document } from '../types';
 import { 
   LogOut, 
   Settings,
@@ -12,29 +14,264 @@ import {
 import SalesList from './SalesList';
 import ContactsList from './ContactsList';
 import DocumentsList from './DocumentsList';
+import ScrollableTabs from './ScrollableTabs';
 
 export default function Dashboard() {
   const { user, currentCompany, signOut } = useApp();
-  const [activeTab, setActiveTab] = useState<'sales' | 'contacts' | 'documents'>('sales');
-  const [sales, setSales] = useState([]);
-  const [contacts, setContacts] = useState([]);
-  const [documents, setDocuments] = useState([]);
+  const [activeTab, setActiveTab] = useState('sales');
+  const [sales, setSales] = useState<Sale[]>([]);
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [documents, setDocuments] = useState<Document[]>([]);
+  const [loading, setLoading] = useState(true);
   
-  // Stats - replace with actual data from Supabase
+  // Search and filter state
+  const [searchQueries, setSearchQueries] = useState<Record<string, string>>({
+    sales: '',
+    contacts: '',
+    documents: ''
+  });
+  const [activeFilters, setActiveFilters] = useState<Record<string, string>>({
+    sales: '',
+    contacts: '',
+    documents: ''
+  });
+  
+  // Calculate stats from actual data
   const stats = {
-    activeSales: 12,
-    upcomingSales: 5,
-    totalLots: 1847
+    activeSales: sales.filter(s => s.status === 'active').length,
+    upcomingSales: sales.filter(s => s.status === 'upcoming').length,
+    totalLots: 0 // We'll calculate this from lots
   };
 
   const loadDashboardData = async () => {
-    // Load your data from Supabase here
-    // This is a placeholder function
+    if (!currentCompany) return;
+
+    setLoading(true);
+    try {
+      // Load sales
+      const { data: salesData, error: salesError } = await supabase
+        .from('sales')
+        .select('*')
+        .eq('company_id', currentCompany.id)
+        .order('created_at', { ascending: false });
+
+      if (salesError) throw salesError;
+      setSales(salesData || []);
+
+      // Load contacts
+      const { data: contactsData, error: contactsError } = await supabase
+        .from('contacts')
+        .select('*')
+        .eq('company_id', currentCompany.id)
+        .order('first_name', { ascending: true });
+
+      if (contactsError) throw contactsError;
+      setContacts(contactsData || []);
+
+      // Load documents
+      const { data: documentsData, error: documentsError } = await supabase
+        .from('documents')
+        .select('*')
+        .eq('company_id', currentCompany.id)
+        .order('created_at', { ascending: false });
+
+      if (documentsError) throw documentsError;
+      setDocuments(documentsData || []);
+
+      // Count total lots across all sales
+      const { count, error: countError } = await supabase
+        .from('lots')
+        .select('*', { count: 'exact', head: true })
+        .in('sale_id', salesData?.map(s => s.id) || []);
+
+      if (!countError) {
+        stats.totalLots = count || 0;
+      }
+    } catch (error) {
+      console.error('Error loading dashboard data:', error);
+      alert('Failed to load dashboard data');
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
-    loadDashboardData();
-  }, []);
+    if (currentCompany) {
+      loadDashboardData();
+    }
+  }, [currentCompany]);
+
+  // Search handler
+  const handleSearch = (tabId: string, query: string) => {
+    setSearchQueries(prev => ({
+      ...prev,
+      [tabId]: query
+    }));
+  };
+
+  // Filter handler
+  const handleFilterChange = (tabId: string, filterId: string) => {
+    setActiveFilters(prev => ({
+      ...prev,
+      [tabId]: filterId
+    }));
+  };
+
+  // Filter data based on search and active filters
+  const getFilteredSales = () => {
+    let filtered = [...sales];
+    
+    // Apply search
+    const query = searchQueries.sales.toLowerCase();
+    if (query) {
+      filtered = filtered.filter(sale =>
+        sale.name.toLowerCase().includes(query) ||
+        sale.location?.toLowerCase().includes(query) ||
+        sale.description?.toLowerCase().includes(query) ||
+        sale.status?.toLowerCase().includes(query) ||
+        sale.sale_type?.toLowerCase().includes(query)
+      );
+    }
+    
+    // Apply filter
+    const filter = activeFilters.sales;
+    if (filter) {
+      filtered = filtered.filter(sale => sale.status === filter);
+    }
+    
+    return filtered;
+  };
+
+  const getFilteredContacts = () => {
+    let filtered = [...contacts];
+    
+    // Apply search
+    const query = searchQueries.contacts.toLowerCase();
+    if (query) {
+      filtered = filtered.filter(contact =>
+        contact.prefix?.toLowerCase().includes(query) ||
+        contact.first_name?.toLowerCase().includes(query) ||
+        contact.middle_name?.toLowerCase().includes(query) ||
+        contact.last_name?.toLowerCase().includes(query) ||
+        contact.suffix?.toLowerCase().includes(query) ||
+        contact.business_name?.toLowerCase().includes(query) ||
+        contact.role?.toLowerCase().includes(query) ||
+        contact.email?.toLowerCase().includes(query) ||
+        contact.phone?.toLowerCase().includes(query) ||
+        contact.address?.toLowerCase().includes(query) ||
+        contact.city?.toLowerCase().includes(query) ||
+        contact.state?.toLowerCase().includes(query) ||
+        contact.zip_code?.toLowerCase().includes(query) ||
+        contact.notes?.toLowerCase().includes(query)
+      );
+    }
+    
+    // Apply filter
+    const filter = activeFilters.contacts;
+    if (filter) {
+      filtered = filtered.filter(contact => contact.role?.toLowerCase() === filter.toLowerCase());
+    }
+    
+    return filtered;
+  };
+
+  const getFilteredDocuments = () => {
+    let filtered = [...documents];
+    
+    // Apply search
+    const query = searchQueries.documents.toLowerCase();
+    if (query) {
+      filtered = filtered.filter(doc =>
+        doc.name?.toLowerCase().includes(query) ||
+        doc.file_name?.toLowerCase().includes(query) ||
+        doc.description?.toLowerCase().includes(query) ||
+        doc.document_type?.toLowerCase().includes(query) ||
+        doc.file_type?.toLowerCase().includes(query)
+      );
+    }
+    
+    // Apply filter
+    const filter = activeFilters.documents;
+    if (filter) {
+      filtered = filtered.filter(doc => doc.document_type === filter);
+    }
+    
+    return filtered;
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading dashboard...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Define tabs for ScrollableTabs component with counts reflecting filtered data
+  const filteredSales = getFilteredSales();
+  const filteredContacts = getFilteredContacts();
+  const filteredDocuments = getFilteredDocuments();
+
+  const tabs = [
+    {
+      id: 'sales',
+      label: 'Sales',
+      icon: <Calendar className="w-4 h-4" />,
+      count: filteredSales.length,
+    },
+    {
+      id: 'contacts',
+      label: 'Contacts',
+      icon: <Users className="w-4 h-4" />,
+      count: filteredContacts.length,
+    },
+    {
+      id: 'documents',
+      label: 'Documents',
+      icon: <FileText className="w-4 h-4" />,
+      count: filteredDocuments.length,
+    },
+  ];
+
+  // Define filters for each tab
+  const tabFilters = {
+    sales: {
+      searchPlaceholder: 'Search sales by name or location...',
+      showSearch: true,
+      showFilter: true,
+      filterOptions: [
+        { id: 'upcoming', label: 'Upcoming', value: 'upcoming' },
+        { id: 'active', label: 'Active', value: 'active' },
+        { id: 'completed', label: 'Completed', value: 'completed' },
+      ],
+    },
+    contacts: {
+      searchPlaceholder: 'Search contacts by name, email, or company...',
+      showSearch: true,
+      showFilter: true,
+      filterOptions: [
+        { id: 'buyer', label: 'Buyers', value: 'buyer' },
+        { id: 'seller', label: 'Sellers', value: 'seller' },
+        { id: 'vendor', label: 'Vendors', value: 'vendor' },
+        { id: 'other', label: 'Other', value: 'other' },
+      ],
+    },
+    documents: {
+      searchPlaceholder: 'Search documents by name or description...',
+      showSearch: true,
+      showFilter: true,
+      filterOptions: [
+        { id: 'contract', label: 'Contracts', value: 'contract' },
+        { id: 'invoice', label: 'Invoices', value: 'invoice' },
+        { id: 'receipt', label: 'Receipts', value: 'receipt' },
+        { id: 'report', label: 'Reports', value: 'report' },
+        { id: 'other', label: 'Other', value: 'other' },
+      ],
+    },
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -113,60 +350,31 @@ export default function Dashboard() {
       {/* Content Area */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 -mt-4">
         <div className="bg-white rounded-lg shadow-md">
-          {/* Tab Navigation - PhotoInventory style */}
-          <div className="border-b border-gray-200">
-            <nav className="flex gap-2 px-6 pt-4" aria-label="Tabs">
-              <button
-                onClick={() => setActiveTab('sales')}
-                className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 transition-colors ${
-                  activeTab === 'sales'
-                    ? 'border-indigo-600 text-indigo-600 bg-indigo-50'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-                }`}
-              >
-                <Calendar className="w-4 h-4" />
-                Sales
-              </button>
-              <button
-                onClick={() => setActiveTab('contacts')}
-                className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 transition-colors ${
-                  activeTab === 'contacts'
-                    ? 'border-indigo-600 text-indigo-600 bg-indigo-50'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-                }`}
-              >
-                <Users className="w-4 h-4" />
-                Contacts
-              </button>
-              <button
-                onClick={() => setActiveTab('documents')}
-                className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 transition-colors ${
-                  activeTab === 'documents'
-                    ? 'border-indigo-600 text-indigo-600 bg-indigo-50'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-                }`}
-              >
-                <FileText className="w-4 h-4" />
-                Documents
-              </button>
-            </nav>
-          </div>
+          {/* Tab Navigation with Search and Filter */}
+          <ScrollableTabs
+            tabs={tabs}
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+            tabFilters={tabFilters}
+            onSearch={handleSearch}
+            onFilterChange={handleFilterChange}
+          />
 
           {/* Tab Content */}
           <div className="p-6">
             {activeTab === 'sales' && (
-              <SalesList sales={sales} onRefresh={loadDashboardData} />
+              <SalesList sales={filteredSales} onRefresh={loadDashboardData} />
             )}
             {activeTab === 'contacts' && (
               <ContactsList 
-                contacts={contacts} 
+                contacts={filteredContacts} 
                 companyId={currentCompany?.id}
                 onRefresh={loadDashboardData} 
               />
             )}
             {activeTab === 'documents' && (
               <DocumentsList 
-                documents={documents} 
+                documents={filteredDocuments} 
                 companyId={currentCompany?.id}
                 onRefresh={loadDashboardData} 
               />

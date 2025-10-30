@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Lot } from '../types';
-import { Plus, Package, DollarSign, Edit, Trash2, Image, Star } from 'lucide-react';
+import { Plus, Package, DollarSign, Edit, Trash2, Image, Star, Ruler, Weight as WeightIcon } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 interface LotsListProps {
@@ -12,6 +12,49 @@ interface LotsListProps {
 
 export default function LotsList({ lots, saleId, onRefresh }: LotsListProps) {
   const navigate = useNavigate();
+  const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
+  const [loadingPhotos, setLoadingPhotos] = useState(false);
+
+  // Load primary photos for all lots
+  useEffect(() => {
+    loadPrimaryPhotos();
+  }, [lots]);
+
+  const loadPrimaryPhotos = async () => {
+    if (lots.length === 0) return;
+
+    setLoadingPhotos(true);
+    try {
+      const urls: Record<string, string> = {};
+      
+      for (const lot of lots) {
+        // Get primary photo for this lot
+        const { data: photos } = await supabase
+          .from('photos')
+          .select('*')
+          .eq('lot_id', lot.id)
+          .eq('is_primary', true)
+          .limit(1);
+
+        if (photos && photos.length > 0) {
+          const photo = photos[0];
+          const { data: urlData } = await supabase.storage
+            .from('photos')
+            .createSignedUrl(photo.file_path, 3600);
+
+          if (urlData?.signedUrl) {
+            urls[lot.id] = urlData.signedUrl;
+          }
+        }
+      }
+      
+      setPhotoUrls(urls);
+    } catch (error) {
+      console.error('Error loading primary photos:', error);
+    } finally {
+      setLoadingPhotos(false);
+    }
+  };
 
   const handleDelete = async (lot: Lot) => {
     if (!confirm(`Delete lot "${lot.name}"?`)) {
@@ -41,6 +84,19 @@ export default function LotsList({ lots, saleId, onRefresh }: LotsListProps) {
     }).format(price);
   };
 
+  const formatDimensions = (lot: Lot) => {
+    const parts = [];
+    if (lot.height) parts.push(`H: ${lot.height}"`);
+    if (lot.width) parts.push(`W: ${lot.width}"`);
+    if (lot.depth) parts.push(`D: ${lot.depth}"`);
+    return parts.length > 0 ? parts.join(' × ') : '-';
+  };
+
+  const formatWeight = (weight?: number) => {
+    if (!weight) return '-';
+    return `${weight} lbs`;
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -66,87 +122,152 @@ export default function LotsList({ lots, saleId, onRefresh }: LotsListProps) {
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="space-y-4">
           {lots.map((lot) => (
             <div
               key={lot.id}
               className="bg-white border border-gray-200 rounded-lg overflow-hidden hover:shadow-lg transition-shadow cursor-pointer group"
               onClick={() => navigate(`/sales/${saleId}/lots/${lot.id}`)}
             >
-              {/* Image Placeholder */}
-              <div className="aspect-square bg-gray-100 flex items-center justify-center relative">
-                <Image className="w-12 h-12 text-gray-400" />
-                
-                {/* Featured badge - if you add a featured field to your Lot type */}
-                {(lot as any).is_featured && (
-                  <div className="absolute top-2 right-2">
-                    <Star className="w-5 h-5 text-yellow-400 fill-yellow-400" />
+              <div className="flex gap-4 p-4">
+                {/* Lot Details */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex-1 min-w-0">
+                      {/* Lot Number */}
+                      {lot.lot_number && (
+                        <p className="text-sm font-bold text-indigo-600 mb-1">
+                          LOT #{lot.lot_number}
+                        </p>
+                      )}
+                      {/* Lot Name */}
+                      <h3 className="text-lg font-semibold text-gray-900 group-hover:text-indigo-600 transition-colors mb-2">
+                        {lot.name}
+                      </h3>
+                    </div>
+                    
+                    {/* Action buttons */}
+                    <div className="flex items-center gap-1 ml-4 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/sales/${saleId}/lots/${lot.id}`);
+                        }}
+                        className="p-1.5 rounded-full hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-all"
+                        aria-label="Edit lot"
+                      >
+                        <Edit className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDelete(lot);
+                        }}
+                        className="p-1.5 rounded-full hover:bg-gray-100 text-gray-400 hover:text-red-600 transition-all"
+                        aria-label="Delete lot"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
-                )}
-              </div>
-              
-              <div className="p-4">
-                <div className="flex items-start justify-between mb-2">
-                  <div className="flex-1 min-w-0">
-                    {lot.lot_number && (
-                      <p className="text-xs font-medium text-gray-500 mb-1">
-                        LOT #{lot.lot_number}
+
+                  {/* Details Grid */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {/* Estimate Range */}
+                    <div>
+                      <p className="text-xs font-medium text-gray-500 mb-1">Estimate</p>
+                      <p className="text-sm font-semibold text-gray-900">
+                        {lot.estimate_low || lot.estimate_high ? (
+                          <>
+                            {formatPrice(lot.estimate_low)} - {formatPrice(lot.estimate_high)}
+                          </>
+                        ) : (
+                          '-'
+                        )}
                       </p>
+                    </div>
+
+                    {/* Starting Bid */}
+                    {lot.starting_bid && (
+                      <div>
+                        <p className="text-xs font-medium text-gray-500 mb-1">Starting Bid</p>
+                        <p className="text-sm font-semibold text-gray-900">
+                          {formatPrice(lot.starting_bid)}
+                        </p>
+                      </div>
                     )}
-                    <h3 className="font-semibold text-gray-900 line-clamp-2 group-hover:text-indigo-600 transition-colors">
-                      {lot.name}
-                    </h3>
-                  </div>
-                  
-                  {/* Action buttons - PhotoInventory style */}
-                  <div className="flex items-center gap-1 ml-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        navigate(`/sales/${saleId}/lots/${lot.id}`);
-                      }}
-                      className="p-1.5 rounded-full hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-all"
-                      aria-label="Edit lot"
-                    >
-                      <Edit className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDelete(lot);
-                      }}
-                      className="p-1.5 rounded-full hover:bg-gray-100 text-gray-400 hover:text-red-600 transition-all"
-                      aria-label="Delete lot"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+
+                    {/* Reserve Price */}
+                    {lot.reserve_price && (
+                      <div>
+                        <p className="text-xs font-medium text-gray-500 mb-1">Reserve</p>
+                        <p className="text-sm font-semibold text-gray-900">
+                          {formatPrice(lot.reserve_price)}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Buy Now Price */}
+                    {lot.buy_now_price && (
+                      <div>
+                        <p className="text-xs font-medium text-gray-500 mb-1">Buy Now</p>
+                        <p className="text-sm font-semibold text-gray-900">
+                          {formatPrice(lot.buy_now_price)}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Dimensions */}
+                    {(lot.height || lot.width || lot.depth) && (
+                      <div>
+                        <p className="text-xs font-medium text-gray-500 mb-1">Dimensions</p>
+                        <p className="text-sm font-semibold text-gray-900">
+                          {formatDimensions(lot)}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Weight */}
+                    {lot.weight && (
+                      <div>
+                        <p className="text-xs font-medium text-gray-500 mb-1">Weight</p>
+                        <p className="text-sm font-semibold text-gray-900">
+                          {formatWeight(lot.weight)}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Category */}
+                    {lot.category && (
+                      <div>
+                        <p className="text-xs font-medium text-gray-500 mb-1">Category</p>
+                        <span className="inline-block px-2 py-1 bg-indigo-100 text-indigo-700 rounded text-xs font-medium">
+                          {lot.category}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
 
-                {lot.description && (
-                  <p className="text-sm text-gray-600 line-clamp-2 mb-3">
-                    {lot.description}
-                  </p>
-                )}
-
-                {/* Estimate */}
-                {(lot.estimate_low || lot.estimate_high) && (
-                  <div className="flex items-center gap-1 text-sm text-gray-700 mb-3">
-                    <DollarSign className="w-4 h-4" />
-                    <span>
-                      {formatPrice(lot.estimate_low)} - {formatPrice(lot.estimate_high)}
-                    </span>
-                  </div>
-                )}
-
-                {/* Category badge */}
-                {lot.category && (
-                  <div>
-                    <span className="inline-block px-2 py-1 bg-indigo-100 text-indigo-700 rounded text-xs font-medium">
-                      {lot.category}
-                    </span>
-                  </div>
-                )}
+                {/* Primary Photo Thumbnail - Right Side */}
+                <div className="w-30 h-30 min-w-[7.5rem] bg-gray-100 flex items-center justify-center relative p-2 rounded flex-shrink-0">
+                  {photoUrls[lot.id] ? (
+                    <img 
+                      src={photoUrls[lot.id]} 
+                      alt={lot.name}
+                      className="max-w-full max-h-full object-contain"
+                    />
+                  ) : (
+                    <Image className="w-12 h-12 text-gray-400" />
+                  )}
+                  
+                  {/* Featured badge */}
+                  {(lot as any).is_featured && (
+                    <div className="absolute -top-1 -right-1">
+                      <Star className="w-5 h-5 text-yellow-400 fill-yellow-400" />
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           ))}
