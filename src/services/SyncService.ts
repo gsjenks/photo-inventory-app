@@ -1,69 +1,88 @@
-// services/SyncService.ts
 import { supabase } from '../lib/supabase';
-import { OfflineStorage } from '../lib/offlineStorage';
+import offlineStorage from '../lib/offlineStorage';
 
-export class SyncService {
-  private storage: OfflineStorage;
+class SyncService {
+  private isSyncing = false;
 
-  constructor() {
-    this.storage = new OfflineStorage();
+  async performSync(): Promise<void> {
+    if (this.isSyncing) {
+      console.log('Sync already in progress');
+      return;
+    }
+
+    this.isSyncing = true;
+    
+    try {
+      // Step 1: Push local changes to cloud
+      await this.pushLocalChanges();
+
+      // Step 2: Pull remote changes from cloud
+      await this.pullRemoteChanges();
+
+      console.log('Sync completed successfully');
+    } catch (error) {
+      console.error('Sync failed:', error);
+      throw error;
+    } finally {
+      this.isSyncing = false;
+    }
   }
 
-  async performSync() {
-    console.log('Starting sync...');
-    
-    // Step 1: Push local changes to cloud
-    await this.pushLocalChanges();
-    
-    // Step 2: Pull cloud changes to local
-    await this.pullCloudChanges();
-    
-    console.log('Sync complete');
-  }
+  private async pushLocalChanges(): Promise<void> {
+    const pendingItems = await offlineStorage.getPendingSyncItems();
 
-  async pushLocalChanges() {
-    // Get pending items from sync queue
-    const pendingItems = await this.storage.getPendingSyncItems();
-    
     for (const item of pendingItems) {
       try {
-        // Apply to Supabase with conflict resolution
         await this.applyToCloud(item);
-        
-        // Mark as synced
-        await this.storage.markSynced(item.id);
+        await offlineStorage.markSynced(item.id);
       } catch (error) {
-        console.error('Sync error:', error);
-        // Keep in queue for retry
+        console.error('Failed to sync item:', item, error);
+        // Continue with other items
       }
     }
   }
 
-  async pullCloudChanges() {
-    // Get last sync timestamp
-    const lastSync = await this.storage.getLastSyncTime();
-    
-    // Pull changes from Supabase since last sync
-    const { data: companies } = await supabase
-      .from('companies')
-      .select('*')
-      .gte('updated_at', lastSync);
-    
-    // Update local database
-    for (const company of companies || []) {
-      await this.storage.upsertCompany(company);
+  private async applyToCloud(item: any): Promise<void> {
+    const { type, table, data } = item;
+
+    switch (type) {
+      case 'create':
+        await supabase.from(table).insert(data);
+        break;
+      case 'update':
+        await supabase.from(table).update(data).eq('id', data.id);
+        break;
+      case 'delete':
+        await supabase.from(table).delete().eq('id', data.id);
+        break;
     }
-    
-    // Update last sync time
-    await this.storage.setLastSyncTime(new Date().toISOString());
   }
 
-  async resolveConflict(localData: any, cloudData: any) {
-    // Cloud is source of truth (as per your requirements)
-    // Compare timestamps
-    if (new Date(cloudData.updated_at) > new Date(localData.updated_at)) {
-      return cloudData; // Cloud wins
+  private async pullRemoteChanges(): Promise<void> {
+    const lastSyncTime = await offlineStorage.getLastSyncTime();
+    
+    // Fetch companies updated since last sync
+    const { data: companies, error } = await supabase
+      .from('companies')
+      .select('*')
+      .gt('updated_at', new Date(lastSyncTime).toISOString());
+
+    if (error) throw error;
+
+    // Store companies locally
+    if (companies) {
+      for (const company of companies) {
+        await offlineStorage.upsertCompany(company);
+      }
     }
-    return localData;
+
+    // Update last sync time
+    await offlineStorage.setLastSyncTime(Date.now());
+  }
+
+  async initialize(): Promise<void> {
+    await offlineStorage.initialize();
   }
 }
+
+export default new SyncService();

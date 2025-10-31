@@ -1,41 +1,71 @@
-// services/ConnectivityService.ts
-import { Network } from '@capacitor/network';
+import SyncService from './SyncService';
 
-export class ConnectivityService {
-  private isOnline: boolean = true;
-  private listeners: ((status: boolean) => void)[] = [];
+class ConnectivityService {
+  private isOnline = navigator.onLine;
+  private syncInterval: ReturnType<typeof setInterval> | null = null;
 
-  async initialize() {
-    // Check initial status
-    const status = await Network.getStatus();
-    this.isOnline = status.connected;
-
-    // Listen for changes
-    Network.addListener('networkStatusChange', (status) => {
-      this.isOnline = status.connected;
-      this.notifyListeners();
-      
-      if (this.isOnline) {
-        this.triggerSync();
-      }
-    });
+  constructor() {
+    this.setupEventListeners();
   }
 
-  getStatus(): boolean {
+  private setupEventListeners(): void {
+    window.addEventListener('online', this.handleOnline.bind(this));
+    window.addEventListener('offline', this.handleOffline.bind(this));
+  }
+
+  private handleOnline(): void {
+    console.log('Connection restored');
+    this.isOnline = true;
+    this.startAutoSync();
+    this.performSync();
+  }
+
+  private handleOffline(): void {
+    console.log('Connection lost');
+    this.isOnline = false;
+    this.stopAutoSync();
+  }
+
+  private startAutoSync(): void {
+    if (this.syncInterval) return;
+
+    // Sync every 5 minutes when online
+    this.syncInterval = setInterval(() => {
+      if (this.isOnline) {
+        this.performSync();
+      }
+    }, 5 * 60 * 1000);
+  }
+
+  private stopAutoSync(): void {
+    if (this.syncInterval) {
+      clearInterval(this.syncInterval);
+      this.syncInterval = null;
+    }
+  }
+
+  async performSync(): Promise<void> {
+    if (!this.isOnline) {
+      console.log('Cannot sync while offline');
+      return;
+    }
+
+    try {
+      await SyncService.performSync();
+    } catch (error) {
+      console.error('Sync error:', error);
+    }
+  }
+
+  getConnectionStatus(): boolean {
     return this.isOnline;
   }
 
-  subscribe(callback: (status: boolean) => void) {
-    this.listeners.push(callback);
-  }
-
-  private notifyListeners() {
-    this.listeners.forEach(listener => listener(this.isOnline));
-  }
-
-  private async triggerSync() {
-    // Import and call sync service
-    const { SyncService } = await import('./SyncService');
-    await SyncService.performSync();
+  destroy(): void {
+    this.stopAutoSync();
+    window.removeEventListener('online', this.handleOnline);
+    window.removeEventListener('offline', this.handleOffline);
   }
 }
+
+export default new ConnectivityService();

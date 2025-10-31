@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { X, Building2, Plus, Check } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { supabase } from '../lib/supabase';
-//import type { Company } from '../types';
 
 interface SettingsModalProps {
   onClose: () => void;

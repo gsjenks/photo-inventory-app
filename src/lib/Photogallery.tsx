@@ -368,7 +368,7 @@ export default function PhotoGallery({
                   name="backgroundColor"
                   value="none"
                   checked={enhancementOptions.backgroundColor === 'none'}
-                  onChange={(e) => setEnhancementOptions({ ...enhancementOptions, backgroundColor: 'none' })}
+                  onChange={(_e) => setEnhancementOptions({ ...enhancementOptions, backgroundColor: 'none' })}
                   className="w-4 h-4 text-indigo-600 border-gray-300 focus:ring-indigo-500"
                 />
                 <span className="text-sm text-gray-700">None</span>
@@ -379,7 +379,7 @@ export default function PhotoGallery({
                   name="backgroundColor"
                   value="white"
                   checked={enhancementOptions.backgroundColor === 'white'}
-                  onChange={(e) => setEnhancementOptions({ ...enhancementOptions, backgroundColor: 'white' })}
+                  onChange={(_e) => setEnhancementOptions({ ...enhancementOptions, backgroundColor: 'white' })}
                   className="w-4 h-4 text-indigo-600 border-gray-300 focus:ring-indigo-500"
                 />
                 <span className="text-sm text-gray-700">White</span>
@@ -390,7 +390,7 @@ export default function PhotoGallery({
                   name="backgroundColor"
                   value="black"
                   checked={enhancementOptions.backgroundColor === 'black'}
-                  onChange={(e) => setEnhancementOptions({ ...enhancementOptions, backgroundColor: 'black' })}
+                  onChange={(_e) => setEnhancementOptions({ ...enhancementOptions, backgroundColor: 'black' })}
                   className="w-4 h-4 text-indigo-600 border-gray-300 focus:ring-indigo-500"
                 />
                 <span className="text-sm text-gray-700">Black</span>
@@ -401,7 +401,7 @@ export default function PhotoGallery({
                   name="backgroundColor"
                   value="grey"
                   checked={enhancementOptions.backgroundColor === 'grey'}
-                  onChange={(e) => setEnhancementOptions({ ...enhancementOptions, backgroundColor: 'grey' })}
+                  onChange={(_e) => setEnhancementOptions({ ...enhancementOptions, backgroundColor: 'grey' })}
                   className="w-4 h-4 text-indigo-600 border-gray-300 focus:ring-indigo-500"
                 />
                 <span className="text-sm text-gray-700">Grey</span>
