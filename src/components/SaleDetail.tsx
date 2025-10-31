@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Package, Users, FileText, BarChart3, ArrowLeft } from 'lucide-react';
 import { supabase } from '../lib/supabase';
@@ -395,7 +395,7 @@ export default function SaleDetail() {
         <h1 className="text-3xl font-bold text-gray-900">{sale.name}</h1>
         
         <div className="flex items-center gap-4 mt-2 text-sm text-gray-600">
-          <span>{formatDate(sale.date)}</span>
+          <span>{formatDate(sale.start_date)}</span>
           {sale.location && (
             <>
               <span>•</span>

@@ -1,9 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { supabase } from '../lib/supabase';
 import type { Sale, Contact, Document } from '../types';
 import { 
-  LogOut, 
   Settings,
   Package,
   TrendingUp,
@@ -17,7 +16,7 @@ import DocumentsList from './DocumentsList';
 import ScrollableTabs from './ScrollableTabs';
 
 export default function Dashboard() {
-  const { user, currentCompany, signOut } = useApp();
+  const { user, currentCompany } = useApp();
   const [activeTab, setActiveTab] = useState('sales');
   const [sales, setSales] = useState<Sale[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -127,9 +126,7 @@ export default function Dashboard() {
       filtered = filtered.filter(sale =>
         sale.name.toLowerCase().includes(query) ||
         sale.location?.toLowerCase().includes(query) ||
-        sale.description?.toLowerCase().includes(query) ||
-        sale.status?.toLowerCase().includes(query) ||
-        sale.sale_type?.toLowerCase().includes(query)
+        sale.status?.toLowerCase().includes(query)
       );
     }
     

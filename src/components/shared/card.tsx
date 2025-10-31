@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Sale } from '../../types';
 import { Plus, Calendar, MapPin, Edit, Trash2 } from 'lucide-react';
@@ -79,12 +79,11 @@ export default function SalesList({ sales, onRefresh }: SalesListProps) {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {sales.map((sale) => (
+            // Card now navigates to detail view on click
             <div
               key={sale.id}
               onClick={() => navigate(`/sales/${sale.id}`)}
-              {/* ✅ FIXED: Card now navigates to detail view */}
               className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-lg transition-shadow group relative cursor-pointer"
-              {/* ✅ FIXED: Added cursor-pointer to indicate clickability */}
             >
               {/* Action buttons - Top Right */}
               <div className="absolute top-4 right-4 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
@@ -112,10 +111,8 @@ export default function SalesList({ sales, onRefresh }: SalesListProps) {
               </div>
 
               <div className="mb-3">
-                <h3 
-                  className="font-semibold text-gray-900 text-lg hover:text-indigo-600 transition-colors pr-20"
-                  {/* ✅ FIXED: Removed separate onClick handler - title now inherits card click */}
-                >
+                {/* Title inherits card click, no separate handler needed */}
+                <h3 className="font-semibold text-gray-900 text-lg hover:text-indigo-600 transition-colors pr-20">
                   {sale.name}
                 </h3>
               </div>
@@ -165,7 +162,7 @@ export default function SalesList({ sales, onRefresh }: SalesListProps) {
 }
 
 /* 
- * ✅ CHANGES MADE:
+ * CHANGES MADE:
  * 
  * 1. Card Click Behavior
  *    - Card now navigates to detail view on click
@@ -182,7 +179,7 @@ export default function SalesList({ sales, onRefresh }: SalesListProps) {
  *    - Action buttons only trigger their specific actions
  * 
  * NAVIGATION FLOW:
- * - Click anywhere on card → Navigate to /sales/{id} (SaleDetail view)
- * - Click Edit button → Open edit modal (prevents navigation)
- * - Click Delete button → Confirm and delete (prevents navigation)
+ * - Click anywhere on card -> Navigate to /sales/{id} (SaleDetail view)
+ * - Click Edit button -> Open edit modal (prevents navigation)
+ * - Click Delete button -> Confirm and delete (prevents navigation)
  */

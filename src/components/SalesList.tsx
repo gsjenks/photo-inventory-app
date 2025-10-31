@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Sale } from '../types';
 import { Plus, Calendar, MapPin, Edit, Trash2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useApp } from '../context/AppContext';
-import SaleModal from './SaleModal';
+import SaleModal from '../components/SaleModal';
 
 interface SalesListProps {
   sales: Sale[];
@@ -85,7 +85,7 @@ export default function SalesList({ sales, onRefresh }: SalesListProps) {
               className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-lg transition-shadow group relative cursor-pointer"
             >
               {/* Action buttons - Top Right */}
-              <div className="absolute top-4 right-4 flex items-center gap-1 z-10">
+              <div className="absolute top-4 right-4 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
                 <button
                   onClick={(e) => {
                     e.stopPropagation();

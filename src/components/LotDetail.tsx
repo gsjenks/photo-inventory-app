@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { enrichLotData } from '../lib/gemini';
+import { enrichLotData } from '../lib/Gemini';
 import type { Lot, Photo } from '../types';
-import { ArrowLeft, Save, Sparkles, Plus } from 'lucide-react';
-import PhotoGallery from './PhotoGallery';
+import { ArrowLeft, Save, Sparkles } from 'lucide-react';
+import PhotoGallery from './Photogallery';
 
 export default function LotDetail() {
   const { saleId, lotId } = useParams<{ saleId: string; lotId: string }>();
@@ -351,9 +351,6 @@ export default function LotDetail() {
         condition: enrichedData.condition || prev.condition,
         estimate_low: enrichedData.estimate_low || prev.estimate_low,
         estimate_high: enrichedData.estimate_high || prev.estimate_high,
-        height: enrichedData.height || prev.height,
-        width: enrichedData.width || prev.width,
-        depth: enrichedData.depth || prev.depth,
       }));
 
       alert('Item enriched with AI data! Review and save changes.');
@@ -401,7 +398,7 @@ export default function LotDetail() {
                 <div className="text-center py-8">
                   <p className="text-gray-600">Save the item first to add photos</p>
                 </div>
-              ) : (
+              ) : lotId ? (
                 <PhotoGallery
                   lotId={lotId}
                   photos={photos}
@@ -409,7 +406,7 @@ export default function LotDetail() {
                   onPhotosChange={loadPhotos}
                   onNextLot={handleSaveAndAddAnother}
                 />
-              )}
+              ) : null}
             </div>
           </div>
 

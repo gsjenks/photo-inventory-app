@@ -1,4 +1,4 @@
-import React from 'react';
+import { useState, type FC, type MouseEvent, type ReactNode } from 'react';
 import { Edit, Trash2, Eye, Download, MoreVertical } from 'lucide-react';
 
 /**
@@ -20,7 +20,7 @@ interface CardActionsProps {
   onView?: () => void;
   onDownload?: () => void;
   customActions?: Array<{
-    icon: React.ReactNode;
+    icon: ReactNode;
     label: string;
     onClick: () => void;
     variant?: 'default' | 'danger';
@@ -29,7 +29,7 @@ interface CardActionsProps {
   showDeleteLabel?: boolean;
 }
 
-export const CardActions: React.FC<CardActionsProps> = ({ 
+export const CardActions: FC<CardActionsProps> = ({ 
   onEdit,
   onDelete,
   onView,
@@ -38,7 +38,7 @@ export const CardActions: React.FC<CardActionsProps> = ({
   showEditLabel = false,
   showDeleteLabel = false
 }) => {
-  const handleAction = (e: React.MouseEvent, action: () => void) => {
+  const handleAction = (e: MouseEvent, action: () => void) => {
     e.stopPropagation();
     action();
   };
@@ -139,21 +139,21 @@ interface CardActionsDropdownProps {
   actions: Array<{
     label: string;
     onClick: () => void;
-    icon?: React.ReactNode;
+    icon?: ReactNode;
     variant?: 'default' | 'danger';
   }>;
 }
 
-export const CardActionsDropdown: React.FC<CardActionsDropdownProps> = ({ actions }) => {
-  const [isOpen, setIsOpen] = React.useState(false);
+export const CardActionsDropdown: FC<CardActionsDropdownProps> = ({ actions }) => {
+  const [isOpen, setIsOpen] = useState(false);
 
-  const handleAction = (e: React.MouseEvent, action: () => void) => {
+  const handleAction = (e: MouseEvent, action: () => void) => {
     e.stopPropagation();
     action();
     setIsOpen(false);
   };
 
-  const handleToggle = (e: React.MouseEvent) => {
+  const handleToggle = (e: MouseEvent) => {
     e.stopPropagation();
     setIsOpen(!isOpen);
   };
@@ -224,14 +224,14 @@ export const CardActionsDropdown: React.FC<CardActionsDropdownProps> = ({ action
  */
 
 interface CardActionButtonProps {
-  children: React.ReactNode;
+  children: ReactNode;
   onClick: () => void;
   variant?: 'primary' | 'secondary' | 'danger';
-  icon?: React.ReactNode;
+  icon?: ReactNode;
   className?: string;
 }
 
-export const CardActionButton: React.FC<CardActionButtonProps> = ({ 
+export const CardActionButton: FC<CardActionButtonProps> = ({ 
   children, 
   onClick,
   variant = 'primary',
@@ -251,7 +251,7 @@ export const CardActionButton: React.FC<CardActionButtonProps> = ({
     }
   };
 
-  const handleClick = (e: React.MouseEvent) => {
+  const handleClick = (e: MouseEvent) => {
     e.stopPropagation();
     onClick();
   };

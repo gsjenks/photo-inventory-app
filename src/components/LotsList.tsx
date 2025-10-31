@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Lot } from '../types';
-import { Plus, Package, DollarSign, Edit, Trash2, Image, Star, Ruler, Weight as WeightIcon } from 'lucide-react';
+import { Plus, Package, Edit, Trash2, Image, Star } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import LotViewModal from './LotViewModal';
+import LotViewModal from './Lotviewmodal';
 
 interface LotsListProps {
   lots: Lot[];
@@ -14,7 +14,7 @@ interface LotsListProps {
 export default function LotsList({ lots, saleId, onRefresh }: LotsListProps) {
   const navigate = useNavigate();
   const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
-  const [loadingPhotos, setLoadingPhotos] = useState(false);
+  const [_loadingPhotos, setLoadingPhotos] = useState(false);
   const [selectedLot, setSelectedLot] = useState<Lot | null>(null);
 
   // Load primary photos for all lots

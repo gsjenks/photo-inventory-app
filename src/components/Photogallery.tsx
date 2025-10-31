@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import { useState, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import type { Photo } from '../types';
 import { 
@@ -9,7 +9,6 @@ import {
   Check, 
   Sparkles,
   X,
-  Eye,
   Plus
 } from 'lucide-react';
 
@@ -434,7 +433,7 @@ export default function EnhancedPhotoGallery({
                   name="backgroundColor"
                   value="none"
                   checked={enhancementOptions.backgroundColor === 'none'}
-                  onChange={(e) => setEnhancementOptions({ ...enhancementOptions, backgroundColor: 'none' })}
+                  onChange={() => setEnhancementOptions({ ...enhancementOptions, backgroundColor: 'none' })}
                   className="w-4 h-4 text-indigo-600 border-gray-300 focus:ring-indigo-500"
                 />
                 <span className="text-sm text-gray-700">None</span>
@@ -445,7 +444,7 @@ export default function EnhancedPhotoGallery({
                   name="backgroundColor"
                   value="white"
                   checked={enhancementOptions.backgroundColor === 'white'}
-                  onChange={(e) => setEnhancementOptions({ ...enhancementOptions, backgroundColor: 'white' })}
+                  onChange={() => setEnhancementOptions({ ...enhancementOptions, backgroundColor: 'white' })}
                   className="w-4 h-4 text-indigo-600 border-gray-300 focus:ring-indigo-500"
                 />
                 <span className="text-sm text-gray-700">White</span>
@@ -456,7 +455,7 @@ export default function EnhancedPhotoGallery({
                   name="backgroundColor"
                   value="black"
                   checked={enhancementOptions.backgroundColor === 'black'}
-                  onChange={(e) => setEnhancementOptions({ ...enhancementOptions, backgroundColor: 'black' })}
+                  onChange={() => setEnhancementOptions({ ...enhancementOptions, backgroundColor: 'black' })}
                   className="w-4 h-4 text-indigo-600 border-gray-300 focus:ring-indigo-500"
                 />
                 <span className="text-sm text-gray-700">Black</span>
@@ -467,7 +466,7 @@ export default function EnhancedPhotoGallery({
                   name="backgroundColor"
                   value="grey"
                   checked={enhancementOptions.backgroundColor === 'grey'}
-                  onChange={(e) => setEnhancementOptions({ ...enhancementOptions, backgroundColor: 'grey' })}
+                  onChange={() => setEnhancementOptions({ ...enhancementOptions, backgroundColor: 'grey' })}
                   className="w-4 h-4 text-indigo-600 border-gray-300 focus:ring-indigo-500"
                 />
                 <span className="text-sm text-gray-700">Grey</span>
