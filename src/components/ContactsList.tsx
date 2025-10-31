@@ -22,6 +22,7 @@ export default function ContactsList({ contacts, companyId, saleId, onRefresh }:
     suffix: '',
     business_name: '',
     role: '',
+    contact_type: '',
     email: '',
     phone: '',
     address: '',
@@ -41,6 +42,7 @@ export default function ContactsList({ contacts, companyId, saleId, onRefresh }:
       suffix: '',
       business_name: '',
       role: '',
+      contact_type: '',
       email: '',
       phone: '',
       address: '',
@@ -62,6 +64,7 @@ export default function ContactsList({ contacts, companyId, saleId, onRefresh }:
       suffix: contact.suffix || '',
       business_name: contact.business_name || '',
       role: contact.role || '',
+      contact_type: (contact as any).contact_type || '',
       email: contact.email || '',
       phone: contact.phone || '',
       address: contact.address || '',
@@ -110,6 +113,7 @@ export default function ContactsList({ contacts, companyId, saleId, onRefresh }:
         suffix: '',
         business_name: '',
         role: '',
+        contact_type: '',
         email: '',
         phone: '',
         address: '',
@@ -208,107 +212,124 @@ export default function ContactsList({ contacts, companyId, saleId, onRefresh }:
           </button>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-4">
           {contacts.map((contact) => (
             <div
               key={contact.id}
-              className="bg-white border border-gray-200 rounded-lg p-5 hover:shadow-md transition-shadow group"
+              className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-lg transition-shadow group relative"
             >
-              <div className="flex items-start justify-between">
-                <div className="flex-1 space-y-3">
-                  {/* Name and Business */}
+              {/* Action buttons - Top Right */}
+              <div className="absolute top-4 right-4 flex items-center gap-1 z-10">
+                <button
+                  onClick={() => openEditModal(contact)}
+                  className="p-1.5 rounded-full bg-white hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-all shadow-sm"
+                  aria-label="Edit contact"
+                >
+                  <Edit className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => handleDelete(contact)}
+                  className="p-1.5 rounded-full bg-white hover:bg-gray-100 text-gray-400 hover:text-red-600 transition-all shadow-sm"
+                  aria-label="Delete contact"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Contact Details */}
+              <div className="space-y-3 pr-20">
+                {/* Name */}
+                <div className="flex items-start gap-3">
+                  <Users className="w-5 h-5 text-indigo-600 flex-shrink-0 mt-0.5" />
                   <div>
-                    <h3 className="text-lg font-semibold text-gray-900">
-                      {getContactName(contact)}
-                    </h3>
+                    <p className="font-semibold text-gray-900 text-lg">
+                      {getContactName(contact) || 'Unnamed Contact'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Business Info */}
+                {(contact.business_name || (contact as any).contact_type || contact.role) && (
+                  <div className="space-y-2">
                     {contact.business_name && (
-                      <div className="flex items-center gap-2 text-gray-600 mt-1">
-                        <Building2 className="w-4 h-4 flex-shrink-0" />
-                        <span className="text-sm">{contact.business_name}</span>
+                      <div className="flex items-center gap-3 text-sm">
+                        <Building2 className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                        <span className="text-gray-700">{contact.business_name}</span>
+                      </div>
+                    )}
+                    {(contact as any).contact_type && (
+                      <div className="flex items-center gap-3 text-sm">
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700">
+                          {(contact as any).contact_type.charAt(0).toUpperCase() + (contact as any).contact_type.slice(1)}
+                        </span>
                       </div>
                     )}
                     {contact.role && (
-                      <div className="flex items-center gap-2 text-gray-600 mt-1">
-                        <Briefcase className="w-4 h-4 flex-shrink-0" />
-                        <span className="text-sm">{contact.role}</span>
+                      <div className="flex items-center gap-3 text-sm">
+                        <Briefcase className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                        <span className="text-gray-600">{contact.role}</span>
                       </div>
                     )}
                   </div>
+                )}
 
-                  {/* Contact Information */}
+                {/* Contact Methods */}
+                {(contact.email || contact.phone) && (
                   <div className="space-y-2">
                     {contact.email && (
-                      <div className="flex items-center gap-2 text-gray-700">
-                        <Mail className="w-4 h-4 flex-shrink-0 text-gray-400" />
+                      <div className="flex items-center gap-3 text-sm">
+                        <Mail className="w-4 h-4 text-gray-400 flex-shrink-0" />
                         <a 
                           href={`mailto:${contact.email}`}
-                          className="text-sm hover:text-indigo-600 transition-colors"
+                          className="text-indigo-600 hover:text-indigo-700 hover:underline"
+                          onClick={(e) => e.stopPropagation()}
                         >
                           {contact.email}
                         </a>
                       </div>
                     )}
                     {contact.phone && (
-                      <div className="flex items-center gap-2 text-gray-700">
-                        <Phone className="w-4 h-4 flex-shrink-0 text-gray-400" />
+                      <div className="flex items-center gap-3 text-sm">
+                        <Phone className="w-4 h-4 text-gray-400 flex-shrink-0" />
                         <a 
                           href={`tel:${contact.phone}`}
-                          className="text-sm hover:text-indigo-600 transition-colors"
+                          className="text-gray-700 hover:text-indigo-600"
+                          onClick={(e) => e.stopPropagation()}
                         >
                           {contact.phone}
                         </a>
                       </div>
                     )}
-                    {getFullAddress(contact) && (
-                      <div className="flex items-start gap-2 text-gray-700">
-                        <MapPin className="w-4 h-4 flex-shrink-0 text-gray-400 mt-0.5" />
-                        <span className="text-sm">{getFullAddress(contact)}</span>
-                      </div>
-                    )}
                   </div>
+                )}
 
-                  {/* Notes */}
-                  {contact.notes && (
-                    <div className="pt-2 border-t border-gray-100">
-                      <p className="text-sm text-gray-600 italic">
-                        "{contact.notes}"
-                      </p>
-                    </div>
-                  )}
-                </div>
-                
-                {/* Action buttons */}
-                <div className="flex items-center gap-1 ml-4 flex-shrink-0">
-                  <button
-                    onClick={() => openEditModal(contact)}
-                    className="p-2 rounded-lg hover:bg-indigo-50 text-gray-400 hover:text-indigo-600 transition-all"
-                    aria-label="Edit contact"
-                    title="Edit contact"
-                  >
-                    <Edit className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => handleDelete(contact)}
-                    className="p-2 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-600 transition-all"
-                    aria-label="Delete contact"
-                    title="Delete contact"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
+                {/* Address */}
+                {getFullAddress(contact) && (
+                  <div className="flex items-start gap-3 text-sm">
+                    <MapPin className="w-4 h-4 text-gray-400 flex-shrink-0 mt-0.5" />
+                    <span className="text-gray-600">{getFullAddress(contact)}</span>
+                  </div>
+                )}
+
+                {/* Notes */}
+                {contact.notes && (
+                  <div className="pt-2 border-t border-gray-100">
+                    <p className="text-sm text-gray-600 italic">{contact.notes}</p>
+                  </div>
+                )}
               </div>
             </div>
           ))}
         </div>
       )}
 
-      {/* Add/Edit Contact Modal */}
+      {/* Add/Edit Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+          <div className="bg-white rounded-lg max-w-3xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between z-10">
               <h3 className="text-lg font-semibold text-gray-900">
-                {editingContact ? 'Edit Contact' : 'Add New Contact'}
+                {editingContact ? 'Edit Contact' : 'New Contact'}
               </h3>
               <button
                 onClick={() => {
@@ -322,7 +343,7 @@ export default function ContactsList({ contacts, companyId, saleId, onRefresh }:
             </div>
 
             <form onSubmit={handleSubmit} className="p-6 space-y-6">
-              {/* Name Section */}
+              {/* Personal Name */}
               <div>
                 <h4 className="text-sm font-medium text-gray-900 mb-3">Personal Information</h4>
                 <div className="grid grid-cols-6 gap-3">
@@ -400,6 +421,43 @@ export default function ContactsList({ contacts, companyId, saleId, onRefresh }:
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
                     />
                   </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Contact Type
+                    </label>
+                    <select
+                      name="contact_type"
+                      value={formData.contact_type}
+                      onChange={handleChange}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    >
+                      <option value="">Select type...</option>
+                      {saleId ? (
+                        // Sale level options
+                        <>
+                          <option value="client">Client</option>
+                          <option value="realtor">Realtor</option>
+                          <option value="appraiser">Appraiser</option>
+                          <option value="executor">Executor</option>
+                          <option value="contractor">Contractor</option>
+                          <option value="emergency">Emergency</option>
+                          <option value="other">Other</option>
+                        </>
+                      ) : (
+                        // Business level options
+                        <>
+                          <option value="staff">Staff</option>
+                          <option value="buyer">Buyer</option>
+                          <option value="contractor">Contractor</option>
+                          <option value="appraiser">Appraiser</option>
+                          <option value="attorney">Attorney</option>
+                          <option value="other">Other</option>
+                        </>
+                      )}
+                    </select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 gap-4 mt-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       Role/Title

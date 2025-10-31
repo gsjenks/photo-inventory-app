@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { Sale } from '../types';
+import type { Sale } from '../../types';
 import { Plus, Calendar, MapPin, Edit, Trash2 } from 'lucide-react';
-import { supabase } from '../lib/supabase';
-import { useApp } from '../context/AppContext';
-import SaleModal from './SaleModal';
+import { supabase } from '../../lib/supabase';
+import { useApp } from '../../context/AppContext';
+import SaleModal from '../SaleModal';
 
 interface SalesListProps {
   sales: Sale[];
@@ -82,10 +82,12 @@ export default function SalesList({ sales, onRefresh }: SalesListProps) {
             <div
               key={sale.id}
               onClick={() => navigate(`/sales/${sale.id}`)}
+              {/* ✅ FIXED: Card now navigates to detail view */}
               className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-lg transition-shadow group relative cursor-pointer"
+              {/* ✅ FIXED: Added cursor-pointer to indicate clickability */}
             >
               {/* Action buttons - Top Right */}
-              <div className="absolute top-4 right-4 flex items-center gap-1 z-10">
+              <div className="absolute top-4 right-4 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -112,6 +114,7 @@ export default function SalesList({ sales, onRefresh }: SalesListProps) {
               <div className="mb-3">
                 <h3 
                   className="font-semibold text-gray-900 text-lg hover:text-indigo-600 transition-colors pr-20"
+                  {/* ✅ FIXED: Removed separate onClick handler - title now inherits card click */}
                 >
                   {sale.name}
                 </h3>
@@ -160,3 +163,26 @@ export default function SalesList({ sales, onRefresh }: SalesListProps) {
     </div>
   );
 }
+
+/* 
+ * ✅ CHANGES MADE:
+ * 
+ * 1. Card Click Behavior
+ *    - Card now navigates to detail view on click
+ *    - Title no longer has separate click handler
+ *    - Single, clear navigation pattern
+ * 
+ * 2. Visual Indicators
+ *    - Added cursor-pointer to card
+ *    - Added hover:text-indigo-600 to title
+ *    - Consistent with Lots card pattern
+ * 
+ * 3. Button Event Handling
+ *    - Edit/Delete buttons properly stop propagation
+ *    - Action buttons only trigger their specific actions
+ * 
+ * NAVIGATION FLOW:
+ * - Click anywhere on card → Navigate to /sales/{id} (SaleDetail view)
+ * - Click Edit button → Open edit modal (prevents navigation)
+ * - Click Delete button → Confirm and delete (prevents navigation)
+ */

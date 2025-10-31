@@ -139,6 +139,30 @@ export default function Dashboard() {
       filtered = filtered.filter(sale => sale.status === filter);
     }
     
+    // Sort by status (active, upcoming, completed) then by date within each status
+    filtered.sort((a, b) => {
+      // Define status priority
+      const statusOrder: Record<string, number> = {
+        'active': 0,
+        'upcoming': 1,
+        'completed': 2
+      };
+      
+      const aStatus = statusOrder[a.status] ?? 999;
+      const bStatus = statusOrder[b.status] ?? 999;
+      
+      // First sort by status
+      if (aStatus !== bStatus) {
+        return aStatus - bStatus;
+      }
+      
+      // Then sort by date within same status (most recent first)
+      const aDate = a.start_date ? new Date(a.start_date).getTime() : 0;
+      const bDate = b.start_date ? new Date(b.start_date).getTime() : 0;
+      
+      return bDate - aDate; // Descending order (newest first)
+    });
+    
     return filtered;
   };
 
@@ -156,6 +180,7 @@ export default function Dashboard() {
         contact.suffix?.toLowerCase().includes(query) ||
         contact.business_name?.toLowerCase().includes(query) ||
         contact.role?.toLowerCase().includes(query) ||
+        (contact as any).contact_type?.toLowerCase().includes(query) ||
         contact.email?.toLowerCase().includes(query) ||
         contact.phone?.toLowerCase().includes(query) ||
         contact.address?.toLowerCase().includes(query) ||
@@ -166,10 +191,10 @@ export default function Dashboard() {
       );
     }
     
-    // Apply filter
+    // Apply filter by contact_type
     const filter = activeFilters.contacts;
     if (filter) {
-      filtered = filtered.filter(contact => contact.role?.toLowerCase() === filter.toLowerCase());
+      filtered = filtered.filter(contact => (contact as any).contact_type?.toLowerCase() === filter.toLowerCase());
     }
     
     return filtered;
@@ -253,9 +278,11 @@ export default function Dashboard() {
       showSearch: true,
       showFilter: true,
       filterOptions: [
+        { id: 'staff', label: 'Staff', value: 'staff' },
         { id: 'buyer', label: 'Buyers', value: 'buyer' },
-        { id: 'seller', label: 'Sellers', value: 'seller' },
-        { id: 'vendor', label: 'Vendors', value: 'vendor' },
+        { id: 'contractor', label: 'Contractors', value: 'contractor' },
+        { id: 'appraiser', label: 'Appraisers', value: 'appraiser' },
+        { id: 'attorney', label: 'Attorneys', value: 'attorney' },
         { id: 'other', label: 'Other', value: 'other' },
       ],
     },
@@ -295,13 +322,6 @@ export default function Dashboard() {
                 aria-label="Settings"
               >
                 <Settings className="w-5 h-5" />
-              </button>
-              <button
-                onClick={signOut}
-                className="flex items-center gap-2 px-4 py-2 bg-white/20 hover:bg-white/30 text-white rounded-lg transition-all"
-              >
-                <LogOut className="w-4 h-4" />
-                <span className="hidden sm:inline text-sm font-medium">Sign Out</span>
               </button>
             </div>
           </div>

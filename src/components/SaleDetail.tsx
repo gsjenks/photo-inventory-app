@@ -26,6 +26,14 @@ export default function SaleDetail() {
     reports: ''
   });
 
+  // Filter state - track active filter for each tab
+  const [activeFilters, setActiveFilters] = useState<Record<string, string>>({
+    items: '',
+    contacts: '',
+    documents: '',
+    reports: ''
+  });
+
   useEffect(() => {
     loadSale();
     loadLots();
@@ -120,121 +128,154 @@ export default function SaleDetail() {
     }));
   };
 
+  // Filter handler - updates active filter for specific tab
+  const handleFilterChange = (tabId: string, filterId: string) => {
+    setActiveFilters(prev => ({
+      ...prev,
+      [tabId]: filterId
+    }));
+  };
+
   // COMPREHENSIVE LOTS FILTER - Searches ALL 20+ metadata fields
   const getFilteredLots = () => {
+    let filtered = [...lots];
     const query = searchQueries.items?.toLowerCase().trim();
     
-    if (!query) {
-      return lots;
+    // Apply search filter
+    if (query) {
+      filtered = filtered.filter(lot => {
+        // Convert numeric fields to strings for searching
+        const lotNumber = lot.lot_number?.toString() || '';
+        const estimateLow = lot.estimate_low?.toString() || '';
+        const estimateHigh = lot.estimate_high?.toString() || '';
+        const startingBid = lot.starting_bid?.toString() || '';
+        const reservePrice = lot.reserve_price?.toString() || '';
+        const buyNowPrice = lot.buy_now_price?.toString() || '';
+        const height = lot.height?.toString() || '';
+        const width = lot.width?.toString() || '';
+        const depth = lot.depth?.toString() || '';
+        const weight = lot.weight?.toString() || '';
+        const quantity = lot.quantity?.toString() || '';
+
+        return (
+          // Basic Info
+          lot.name?.toLowerCase().includes(query) ||
+          lot.description?.toLowerCase().includes(query) ||
+          lot.condition?.toLowerCase().includes(query) ||
+          lotNumber.includes(query) ||
+          
+          // Categorization
+          lot.category?.toLowerCase().includes(query) ||
+          lot.style?.toLowerCase().includes(query) ||
+          lot.origin?.toLowerCase().includes(query) ||
+          
+          // Creator/Provenance
+          lot.creator?.toLowerCase().includes(query) ||
+          lot.materials?.toLowerCase().includes(query) ||
+          lot.consignor?.toLowerCase().includes(query) ||
+          
+          // Pricing (search for numbers like "5000" or partial matches)
+          estimateLow.includes(query) ||
+          estimateHigh.includes(query) ||
+          startingBid.includes(query) ||
+          reservePrice.includes(query) ||
+          buyNowPrice.includes(query) ||
+          
+          // Dimensions & Weight (search for numbers like "12" or "24.5")
+          height.includes(query) ||
+          width.includes(query) ||
+          depth.includes(query) ||
+          weight.includes(query) ||
+          quantity.includes(query)
+        );
+      });
     }
-
-    return lots.filter(lot => {
-      // Convert numeric fields to strings for searching
-      const lotNumber = lot.lot_number?.toString() || '';
-      const estimateLow = lot.estimate_low?.toString() || '';
-      const estimateHigh = lot.estimate_high?.toString() || '';
-      const startingBid = lot.starting_bid?.toString() || '';
-      const reservePrice = lot.reserve_price?.toString() || '';
-      const buyNowPrice = lot.buy_now_price?.toString() || '';
-      const height = lot.height?.toString() || '';
-      const width = lot.width?.toString() || '';
-      const depth = lot.depth?.toString() || '';
-      const weight = lot.weight?.toString() || '';
-      const quantity = lot.quantity?.toString() || '';
-
-      return (
-        // Basic Info
-        lot.name?.toLowerCase().includes(query) ||
-        lot.description?.toLowerCase().includes(query) ||
-        lot.condition?.toLowerCase().includes(query) ||
-        lotNumber.includes(query) ||
-        
-        // Categorization
-        lot.category?.toLowerCase().includes(query) ||
-        lot.style?.toLowerCase().includes(query) ||
-        lot.origin?.toLowerCase().includes(query) ||
-        
-        // Creator/Provenance
-        lot.creator?.toLowerCase().includes(query) ||
-        lot.materials?.toLowerCase().includes(query) ||
-        lot.consignor?.toLowerCase().includes(query) ||
-        
-        // Pricing (search for numbers like "5000" or partial matches)
-        estimateLow.includes(query) ||
-        estimateHigh.includes(query) ||
-        startingBid.includes(query) ||
-        reservePrice.includes(query) ||
-        buyNowPrice.includes(query) ||
-        
-        // Dimensions & Weight (search for numbers like "12" or "24.5")
-        height.includes(query) ||
-        width.includes(query) ||
-        depth.includes(query) ||
-        weight.includes(query) ||
-        quantity.includes(query)
-      );
-    });
+    
+    // Apply category filter
+    const filter = activeFilters.items;
+    if (filter) {
+      filtered = filtered.filter(lot => lot.category?.toLowerCase() === filter.toLowerCase());
+    }
+    
+    return filtered;
   };
 
   // COMPREHENSIVE CONTACTS FILTER - Searches ALL 14 metadata fields
   const getFilteredContacts = () => {
+    let filtered = [...contacts];
     const query = searchQueries.contacts?.toLowerCase().trim();
     
-    if (!query) {
-      return contacts;
+    // Apply search filter
+    if (query) {
+      filtered = filtered.filter(contact => {
+        return (
+          // Name Parts
+          contact.prefix?.toLowerCase().includes(query) ||
+          contact.first_name?.toLowerCase().includes(query) ||
+          contact.middle_name?.toLowerCase().includes(query) ||
+          contact.last_name?.toLowerCase().includes(query) ||
+          contact.suffix?.toLowerCase().includes(query) ||
+          
+          // Business
+          contact.business_name?.toLowerCase().includes(query) ||
+          contact.role?.toLowerCase().includes(query) ||
+          (contact as any).contact_type?.toLowerCase().includes(query) ||
+          
+          // Contact Info
+          contact.email?.toLowerCase().includes(query) ||
+          contact.phone?.toLowerCase().includes(query) ||
+          
+          // Address
+          contact.address?.toLowerCase().includes(query) ||
+          contact.city?.toLowerCase().includes(query) ||
+          contact.state?.toLowerCase().includes(query) ||
+          contact.zip_code?.toLowerCase().includes(query) ||
+          
+          // Other
+          contact.notes?.toLowerCase().includes(query)
+        );
+      });
     }
-
-    return contacts.filter(contact => {
-      return (
-        // Name Parts
-        contact.prefix?.toLowerCase().includes(query) ||
-        contact.first_name?.toLowerCase().includes(query) ||
-        contact.middle_name?.toLowerCase().includes(query) ||
-        contact.last_name?.toLowerCase().includes(query) ||
-        contact.suffix?.toLowerCase().includes(query) ||
-        
-        // Business
-        contact.business_name?.toLowerCase().includes(query) ||
-        contact.role?.toLowerCase().includes(query) ||
-        
-        // Contact Info
-        contact.email?.toLowerCase().includes(query) ||
-        contact.phone?.toLowerCase().includes(query) ||
-        
-        // Address
-        contact.address?.toLowerCase().includes(query) ||
-        contact.city?.toLowerCase().includes(query) ||
-        contact.state?.toLowerCase().includes(query) ||
-        contact.zip_code?.toLowerCase().includes(query) ||
-        
-        // Other
-        contact.notes?.toLowerCase().includes(query)
-      );
-    });
+    
+    // Apply contact_type filter
+    const filter = activeFilters.contacts;
+    if (filter) {
+      filtered = filtered.filter(contact => (contact as any).contact_type?.toLowerCase() === filter.toLowerCase());
+    }
+    
+    return filtered;
   };
 
   // COMPREHENSIVE DOCUMENTS FILTER - Searches ALL 5 metadata fields
   const getFilteredDocuments = () => {
+    let filtered = [...documents];
     const query = searchQueries.documents?.toLowerCase().trim();
     
-    if (!query) {
-      return documents;
+    // Apply search filter
+    if (query) {
+      filtered = filtered.filter(doc => {
+        return (
+          // File Names
+          doc.name?.toLowerCase().includes(query) ||
+          doc.file_name?.toLowerCase().includes(query) ||
+          
+          // Content
+          doc.description?.toLowerCase().includes(query) ||
+          
+          // Types
+          doc.document_type?.toLowerCase().includes(query) ||
+          doc.file_type?.toLowerCase().includes(query)
+        );
+      });
     }
-
-    return documents.filter(doc => {
-      return (
-        // File Names
-        doc.name?.toLowerCase().includes(query) ||
-        doc.file_name?.toLowerCase().includes(query) ||
-        
-        // Content
-        doc.description?.toLowerCase().includes(query) ||
-        
-        // Types
-        doc.document_type?.toLowerCase().includes(query) ||
-        doc.file_type?.toLowerCase().includes(query)
-      );
-    });
+    
+    // Apply document type filter
+    const filter = activeFilters.documents;
+    if (filter) {
+      filtered = filtered.filter(doc => doc.document_type === filter);
+    }
+    
+    return filtered;
   };
 
   // Get filtered data for each tab
@@ -274,17 +315,45 @@ export default function SaleDetail() {
     items: {
       searchPlaceholder: 'Search items by name, category, price, lot #, dimensions...',
       showSearch: true,
-      showFilter: false,
+      showFilter: true,
+      filterOptions: [
+        { id: 'furniture', label: 'Furniture', value: 'furniture' },
+        { id: 'art', label: 'Art', value: 'art' },
+        { id: 'jewelry', label: 'Jewelry', value: 'jewelry' },
+        { id: 'collectibles', label: 'Collectibles', value: 'collectibles' },
+        { id: 'antiques', label: 'Antiques', value: 'antiques' },
+        { id: 'electronics', label: 'Electronics', value: 'electronics' },
+        { id: 'tools', label: 'Tools', value: 'tools' },
+        { id: 'vehicles', label: 'Vehicles', value: 'vehicles' },
+        { id: 'books', label: 'Books', value: 'books' },
+        { id: 'other', label: 'Other', value: 'other' },
+      ],
     },
     contacts: {
       searchPlaceholder: 'Search contacts by name, email, phone, company, address...',
       showSearch: true,
-      showFilter: false,
+      showFilter: true,
+      filterOptions: [
+        { id: 'client', label: 'Clients', value: 'client' },
+        { id: 'realtor', label: 'Realtors', value: 'realtor' },
+        { id: 'appraiser', label: 'Appraisers', value: 'appraiser' },
+        { id: 'executor', label: 'Executors', value: 'executor' },
+        { id: 'contractor', label: 'Contractors', value: 'contractor' },
+        { id: 'emergency', label: 'Emergency', value: 'emergency' },
+        { id: 'other', label: 'Other', value: 'other' },
+      ],
     },
     documents: {
       searchPlaceholder: 'Search documents by name, type, description...',
       showSearch: true,
-      showFilter: false,
+      showFilter: true,
+      filterOptions: [
+        { id: 'contract', label: 'Contracts', value: 'contract' },
+        { id: 'invoice', label: 'Invoices', value: 'invoice' },
+        { id: 'receipt', label: 'Receipts', value: 'receipt' },
+        { id: 'report', label: 'Reports', value: 'report' },
+        { id: 'other', label: 'Other', value: 'other' },
+      ],
     },
     reports: {
       showSearch: false,
@@ -354,6 +423,7 @@ export default function SaleDetail() {
         onTabChange={setActiveTab}
         tabFilters={tabFilters}
         onSearch={handleSearch}
+        onFilterChange={handleFilterChange}
       />
 
       {/* Tab Content */}

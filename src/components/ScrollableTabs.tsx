@@ -253,15 +253,23 @@ export default function ScrollableTabs({
                       : 'Filter'}
                   </span>
                   {selectedFilter && (
-                    <button
+                    <span
                       onClick={(e) => {
                         e.stopPropagation();
                         clearFilter();
                       }}
-                      className="ml-1 hover:bg-indigo-100 rounded-full p-0.5"
+                      className="ml-1 hover:bg-indigo-100 rounded-full p-0.5 cursor-pointer inline-flex"
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.stopPropagation();
+                          clearFilter();
+                        }
+                      }}
                     >
                       <X className="w-3 h-3" />
-                    </button>
+                    </span>
                   )}
                 </button>
 
