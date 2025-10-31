@@ -7,7 +7,8 @@ interface HeaderProps {
   onSearchClick?: () => void;
 }
 
-export default function Header({ onSearchClick }: HeaderProps) {
+// Add underscore to show it's intentionally unused
+export default function Header({ onSearchClick: _onSearchClick }: HeaderProps) {
   const { user, currentCompany, companies, setCurrentCompany, signOut } = useApp();
   const [showCompanyMenu, setShowCompanyMenu] = useState(false);
   const [showSettings, setShowSettings] = useState(false);

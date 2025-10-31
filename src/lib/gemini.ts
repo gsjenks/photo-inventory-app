@@ -1,272 +1,176 @@
-// lib/gemini.ts - Complete Gemini integration with photo and lot enrichment
+// src/lib/Gemini.ts
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
-// Photo enrichment types
-export interface PhotoEnrichmentResult {
-  description: string;
-  tags: string[];
-  colors: string[];
-  objects: string[];
+const API_KEY = import.meta.env.VITE_GOOGLE_AI_API_KEY || '';
+
+let genAI: GoogleGenerativeAI | null = null;
+
+// Initialize only if API key is available
+if (API_KEY) {
+  genAI = new GoogleGenerativeAI(API_KEY);
 }
 
-// Enrich a single photo with AI-generated metadata
-export async function enrichPhotoMetadata(imageUrl: string): Promise<PhotoEnrichmentResult> {
-  try {
-    // Fetch the image and convert to base64
-    const response = await fetch(imageUrl);
-    const blob = await response.blob();
-    const base64 = await blobToBase64(blob);
-    
-    // Call Gemini AI vision service
-    const aiResponse = await callAIVisionService(base64);
-    
-    return {
-      description: aiResponse.description || '',
-      tags: aiResponse.tags || [],
-      colors: aiResponse.colors || [],
-      objects: aiResponse.objects || [],
-    };
-  } catch (error) {
-    console.error('Error enriching photo metadata:', error);
-    throw error;
-  }
-}
-
-// Convert blob to base64
-function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const base64 = reader.result as string;
-      resolve(base64.split(',')[1]); // Remove data:image/jpeg;base64, prefix
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
-}
-
-// Call Gemini AI vision service for photo analysis
-async function callAIVisionService(base64Image: string): Promise<any> {
-  const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
-  
-  if (!GEMINI_API_KEY) {
-    throw new Error('VITE_GEMINI_API_KEY is not set in environment variables');
-  }
-  
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        contents: [{
-          parts: [
-            {
-              text: `Analyze this auction item photo and provide:
-1. A detailed description of the item (2-3 sentences)
-2. A list of 5-10 relevant tags/keywords
-3. The 3-5 dominant colors in the image
-4. A list of objects/items visible in the photo
-
-Format your response as JSON with keys: description, tags (array), colors (array), objects (array)
-
-Example format:
-{
-  "description": "A detailed description here",
-  "tags": ["tag1", "tag2", "tag3"],
-  "colors": ["blue", "gold", "white"],
-  "objects": ["vase", "table", "flowers"]
-}`
-            },
-            {
-              inline_data: {
-                mime_type: 'image/jpeg',
-                data: base64Image
-              }
-            }
-          ]
-        }]
-      })
-    }
-  );
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Gemini API error: ${response.status} - ${errorText}`);
-  }
-
-  const data = await response.json();
-  
-  if (!data.candidates || data.candidates.length === 0) {
-    throw new Error('No response from Gemini API');
-  }
-  
-  const text = data.candidates[0].content.parts[0].text;
-  
-  // Parse the JSON response from the AI
-  try {
-    // Remove markdown code blocks if present
-    const cleanText = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-    const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
-    
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
-      return {
-        description: parsed.description || text,
-        tags: Array.isArray(parsed.tags) ? parsed.tags : [],
-        colors: Array.isArray(parsed.colors) ? parsed.colors : [],
-        objects: Array.isArray(parsed.objects) ? parsed.objects : []
-      };
-    }
-  } catch (e) {
-    console.error('Error parsing AI response:', e);
-  }
-  
-  // Fallback response - try to extract useful info from plain text
-  return {
-    description: text,
-    tags: [],
-    colors: [],
-    objects: []
-  };
-}
-
-// Lot enrichment types
-export interface LotEnrichmentResult {
+/**
+ * Enriches lot data using AI to generate descriptions and additional information
+ */
+export async function enrichLotData(lotData: {
+  name?: string;
   description?: string;
   category?: string;
-  style?: string;
-  origin?: string;
-  creator?: string;
   materials?: string;
+  creator?: string;
+  origin?: string;
   condition?: string;
-  estimate_low?: number;
-  estimate_high?: number;
-}
+  style?: string;
+  [key: string]: any;
+}): Promise<{
+  enrichedDescription?: string;
+  suggestedCategory?: string;
+  estimatedPeriod?: string;
+  keywords?: string[];
+  condition?: string;
+  error?: string;
+}> {
+  if (!genAI) {
+    console.warn('Gemini AI not configured. Add VITE_GOOGLE_AI_API_KEY to use AI features.');
+    return {
+      error: 'AI features not configured',
+    };
+  }
 
-// Enrich lot data based on photos
-export async function enrichLotData(photoUrls: string[]): Promise<LotEnrichmentResult> {
   try {
-    if (photoUrls.length === 0) {
-      throw new Error('No photos provided for enrichment');
-    }
+    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
 
-    // Use the first photo for lot-level enrichment
-    const primaryPhotoUrl = photoUrls[0];
-    
-    const response = await fetch(primaryPhotoUrl);
-    const blob = await response.blob();
-    const base64 = await blobToBase64(blob);
-    
-    const aiResponse = await callLotEnrichmentService(base64);
-    
-    return aiResponse;
-  } catch (error) {
-    console.error('Error enriching lot data:', error);
-    throw error;
-  }
-}
+    // Build a comprehensive prompt from available lot data
+    const prompt = `You are an expert art and antiques appraiser. Analyze this lot information and provide enriched details:
 
-// Call Gemini AI for lot-level enrichment
-async function callLotEnrichmentService(base64Image: string): Promise<LotEnrichmentResult> {
-  const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
-  
-  if (!GEMINI_API_KEY) {
-    throw new Error('VITE_GEMINI_API_KEY is not set in environment variables');
-  }
-  
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        contents: [{
-          parts: [
-            {
-              text: `Analyze this auction item and provide detailed information:
+Lot Name: ${lotData.name || 'Not provided'}
+Current Description: ${lotData.description || 'Not provided'}
+Category: ${lotData.category || 'Not provided'}
+Materials: ${lotData.materials || 'Not provided'}
+Creator/Artist: ${lotData.creator || 'Not provided'}
+Origin: ${lotData.origin || 'Not provided'}
+Condition: ${lotData.condition || 'Not provided'}
+Style: ${lotData.style || 'Not provided'}
 
-1. Description: A comprehensive description (3-5 sentences) of the item
-2. Category: The item category (e.g., "Furniture", "Art", "Jewelry", "Collectibles")
-3. Style: The artistic/design style (e.g., "Victorian", "Mid-Century Modern", "Art Deco")
-4. Origin: Country or region of origin
-5. Creator: Artist, manufacturer, or maker (if identifiable)
-6. Materials: Primary materials used (e.g., "Oak wood", "Sterling silver", "Oil on canvas")
-7. Condition: Overall condition assessment (e.g., "Excellent", "Good", "Fair", "Poor")
-8. Estimate: Estimated auction value range in USD (low and high)
+Please provide:
+1. An enriched, professional description (2-3 sentences)
+2. Suggested category (if current one is vague)
+3. Estimated time period or era
+4. 3-5 relevant keywords for cataloging
+5. Brief condition assessment if not provided
 
-Format your response as JSON:
-{
-  "description": "detailed description",
-  "category": "category name",
-  "style": "style/period",
-  "origin": "country/region",
-  "creator": "maker name or Unknown",
-  "materials": "primary materials",
-  "condition": "condition assessment",
-  "estimate_low": 100,
-  "estimate_high": 500
-}`
-            },
-            {
-              inline_data: {
-                mime_type: 'image/jpeg',
-                data: base64Image
-              }
-            }
-          ]
-        }]
-      })
-    }
-  );
+Format your response as JSON with keys: enrichedDescription, suggestedCategory, estimatedPeriod, keywords (array), conditionNotes`;
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Gemini API error: ${response.status} - ${errorText}`);
-  }
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
 
-  const data = await response.json();
-  
-  if (!data.candidates || data.candidates.length === 0) {
-    throw new Error('No response from Gemini API');
-  }
-  
-  const text = data.candidates[0].content.parts[0].text;
-  
-  // Parse the JSON response
-  try {
-    const cleanText = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-    const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
-    
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
+    // Try to parse the JSON response
+    try {
+      const parsed = JSON.parse(text);
+      return parsed;
+    } catch {
+      // If not valid JSON, return the text as enriched description
       return {
-        description: parsed.description || undefined,
-        category: parsed.category || undefined,
-        style: parsed.style || undefined,
-        origin: parsed.origin || undefined,
-        creator: parsed.creator !== 'Unknown' ? parsed.creator : undefined,
-        materials: parsed.materials || undefined,
-        condition: parsed.condition || undefined,
-        estimate_low: parsed.estimate_low ? Number(parsed.estimate_low) : undefined,
-        estimate_high: parsed.estimate_high ? Number(parsed.estimate_high) : undefined,
+        enrichedDescription: text,
       };
     }
-  } catch (e) {
-    console.error('Error parsing lot enrichment response:', e);
+  } catch (error) {
+    console.error('Gemini API error in enrichLotData:', error);
+    return {
+      error: 'Failed to enrich lot data. Please try again.',
+    };
   }
-  
-  // Fallback - return description only
-  return {
-    description: text
-  };
 }
 
-// Export all functions and types
-export default {
-  enrichPhotoMetadata,
-  enrichLotData,
-};
+/**
+ * Generates a description from a text prompt
+ */
+export async function generateDescription(prompt: string): Promise<string> {
+  if (!genAI) {
+    return 'AI features not configured. Please add VITE_GOOGLE_AI_API_KEY to your environment variables.';
+  }
+
+  try {
+    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    return response.text();
+  } catch (error) {
+    console.error('Gemini API error:', error);
+    return 'Failed to generate AI description. Please try again.';
+  }
+}
+
+/**
+ * Analyzes an image and generates insights
+ */
+export async function analyzeImage(
+  imageData: string,
+  prompt: string = 'Describe this item in detail for an auction catalog.'
+): Promise<string> {
+  if (!genAI) {
+    return 'AI features not configured. Please add VITE_GOOGLE_AI_API_KEY to your environment variables.';
+  }
+
+  try {
+    const model = genAI.getGenerativeModel({ model: 'gemini-pro-vision' });
+
+    const imageParts = [
+      {
+        inlineData: {
+          data: imageData.includes(',') ? imageData.split(',')[1] : imageData,
+          mimeType: imageData.includes('png') ? 'image/png' : 'image/jpeg',
+        },
+      },
+    ];
+
+    const result = await model.generateContent([prompt, ...imageParts]);
+    const response = await result.response;
+    return response.text();
+  } catch (error) {
+    console.error('Gemini Vision API error:', error);
+    return 'Failed to analyze image. Please try again.';
+  }
+}
+
+/**
+ * Generates catalog-style descriptions for auction lots
+ */
+export async function generateCatalogDescription(lotInfo: {
+  name: string;
+  creator?: string;
+  materials?: string;
+  dimensions?: string;
+  condition?: string;
+  provenance?: string;
+}): Promise<string> {
+  if (!genAI) {
+    return 'AI features not configured.';
+  }
+
+  try {
+    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+
+    const prompt = `Write a professional auction catalog description for:
+    
+Title: ${lotInfo.name}
+${lotInfo.creator ? `Artist/Creator: ${lotInfo.creator}` : ''}
+${lotInfo.materials ? `Materials: ${lotInfo.materials}` : ''}
+${lotInfo.dimensions ? `Dimensions: ${lotInfo.dimensions}` : ''}
+${lotInfo.condition ? `Condition: ${lotInfo.condition}` : ''}
+${lotInfo.provenance ? `Provenance: ${lotInfo.provenance}` : ''}
+
+Write a concise, professional description suitable for an auction catalog (3-4 sentences). Focus on key features, craftsmanship, and appeal to collectors.`;
+
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    return response.text();
+  } catch (error) {
+    console.error('Gemini API error:', error);
+    return 'Failed to generate catalog description.';
+  }
+}
+
+export const geminiEnabled = !!genAI;
