@@ -307,9 +307,8 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
         const remainingCompanies = companies.filter(c => c.id !== companyId);
         if (remainingCompanies.length > 0) {
           setCurrentCompany(remainingCompanies[0]);
-        } else {
-          setCurrentCompany(null);
         }
+        // If no companies remain, refreshCompanies() will handle setting currentCompany to null
       }
 
       setDeleteConfirmation(null);

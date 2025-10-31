@@ -1,11 +1,11 @@
 {
-  "name": "PhotoInventory - Auction Management",
-  "short_name": "PhotoInventory",
-  "description": "Comprehensive inventory management system for auction houses and collectors with AI-powered features",
+  "name": "CatalogPro - AI-Powered Inventory Management",
+  "short_name": "CatalogPro",
+  "description": "AI-powered inventory management for auction houses, estate sales, and collectors with smart cataloging features",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
-  "theme_color": "#2563eb",
+  "theme_color": "#4f46e5",
   "orientation": "portrait-primary",
   "icons": [
     {
@@ -35,13 +35,20 @@
       "form_factor": "wide"
     }
   ],
-  "categories": ["business", "productivity"],
+  "categories": ["business", "productivity", "utilities"],
   "shortcuts": [
     {
       "name": "Dashboard",
       "short_name": "Dashboard",
       "description": "View your dashboard",
       "url": "/",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "New Sale",
+      "short_name": "New Sale",
+      "description": "Create a new sale or auction",
+      "url": "/?action=new-sale",
       "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
     }
   ]
