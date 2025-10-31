@@ -8,8 +8,7 @@ import {
   Trash2, 
   Check, 
   Sparkles,
-  X,
-  Eye
+  X
 } from 'lucide-react';
 
 interface PhotoGalleryProps {

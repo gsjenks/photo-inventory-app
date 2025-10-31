@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { enrichLotData } from '../lib/Gemini';
+import type { enrichLotData } from '../lib/Gemini';
 import type { Lot, Photo } from '../types';
 import { ArrowLeft, Save, Sparkles } from 'lucide-react';
 import PhotoGallery from './Photogallery';
