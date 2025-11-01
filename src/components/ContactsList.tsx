@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabase';
-import type { Contact } from '../types';
+import type { Contact } from '../Types';
 import { Users, Plus, Mail, Phone, X, Edit, Trash2, MapPin, Building2, Briefcase } from 'lucide-react';
 
 interface ContactsListProps {

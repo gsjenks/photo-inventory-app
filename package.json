@@ -27,6 +27,7 @@
     "@google/generative-ai": "^0.24.1",
     "@supabase/supabase-js": "^2.77.0",
     "@tailwindcss/postcss": "^4.1.16",
+    "idb": "^8.0.3",
     "lucide-react": "^0.548.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",

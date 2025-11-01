@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
-import type { Document } from '../types';
+import type { Document } from '../Types';
 import { FileText, Plus, Download, X, Upload, Edit, Trash2, ExternalLink, Maximize2, Loader, AlertCircle, Filter, Search } from 'lucide-react';
 
 interface DocumentsListProps {

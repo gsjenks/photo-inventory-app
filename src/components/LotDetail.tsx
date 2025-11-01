@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { enrichLotData } from '../lib/Gemini'; // Changed from 'import type'
-import type { Lot, Photo } from '../types';
-import { ArrowLeft, Save, Sparkles } from 'lucide-react';
+import { enrichLotData } from '../lib/Gemini';
+import type { Lot, Photo } from '../Types';
+import { ArrowLeft, Save, Sparkles, Wifi, WifiOff } from 'lucide-react';
 import PhotoGallery from './Photogallery';
+import * as LotNumberService from '../services/LotNumberService';
+import ConnectivityService from '../services/ConnectivityService';
 
 export default function LotDetail() {
   const { saleId, lotId } = useParams<{ saleId: string; lotId: string }>();
@@ -35,8 +37,32 @@ export default function LotDetail() {
   const [saving, setSaving] = useState(false);
   const [enriching, setEnriching] = useState(false);
   const [error, setError] = useState('');
+  const [isOnline, setIsOnline] = useState(ConnectivityService.getConnectionStatus());
+  const [lotNumberAssigned, setLotNumberAssigned] = useState(false);
 
   const isNewLot = lotId === 'new';
+
+  // Monitor connectivity status
+  useEffect(() => {
+    const checkConnectivity = () => {
+      setIsOnline(ConnectivityService.getConnectionStatus());
+    };
+
+    window.addEventListener('online', checkConnectivity);
+    window.addEventListener('offline', checkConnectivity);
+
+    return () => {
+      window.removeEventListener('online', checkConnectivity);
+      window.removeEventListener('offline', checkConnectivity);
+    };
+  }, []);
+
+  // Auto-assign lot number for new lots
+  useEffect(() => {
+    if (isNewLot && saleId && !lotNumberAssigned) {
+      assignLotNumber();
+    }
+  }, [isNewLot, saleId, lotNumberAssigned]);
 
   useEffect(() => {
     if (!isNewLot) {
@@ -45,6 +71,17 @@ export default function LotDetail() {
       setLoading(false);
     }
   }, [lotId, isNewLot]);
+
+  const assignLotNumber = async () => {
+    try {
+      const nextLotNumber = await LotNumberService.getNextLotNumber(saleId!, isOnline);
+      setLot(prev => ({ ...prev, lot_number: nextLotNumber }));
+      setLotNumberAssigned(true);
+    } catch (error) {
+      console.error('Error assigning lot number:', error);
+      setError('Failed to assign lot number. Please try again.');
+    }
+  };
 
   const loadLot = async () => {
     if (!lotId || lotId === 'new') return;
@@ -59,6 +96,7 @@ export default function LotDetail() {
 
       if (lotError) throw lotError;
       setLot(lotData);
+      setLotNumberAssigned(true);
 
       const { data: photosData, error: photosError } = await supabase
         .from('photos')
@@ -93,6 +131,11 @@ export default function LotDetail() {
   const handleSave = async () => {
     if (!lot.name?.trim()) {
       alert('Item name is required');
+      return;
+    }
+
+    if (!lot.lot_number) {
+      alert('Lot number is required');
       return;
     }
 
@@ -136,6 +179,11 @@ export default function LotDetail() {
       return;
     }
 
+    if (!isOnline) {
+      alert('AI enrichment requires an internet connection');
+      return;
+    }
+
     setEnriching(true);
     setError('');
 
@@ -148,14 +196,11 @@ export default function LotDetail() {
 
       const enrichedData = await enrichLotData(validUrls);
 
-      // Map the enriched data to lot fields using correct property names
       setLot(prev => ({
         ...prev,
         description: enrichedData.enrichedDescription || prev.description,
         category: enrichedData.suggestedCategory || prev.category,
         condition: enrichedData.condition || prev.condition,
-        // Note: The AI returns 'estimatedPeriod' and 'keywords' but we don't have fields for those
-        // You may want to add these fields to your Lot type or append them to description
       }));
 
       alert('Item enriched with AI data! Review and save changes.');
@@ -167,6 +212,8 @@ export default function LotDetail() {
       setEnriching(false);
     }
   };
+
+  const isTemporaryLotNumber = LotNumberService.isTemporaryNumber(lot.lot_number);
 
   if (loading) {
     return (
@@ -191,8 +238,27 @@ export default function LotDetail() {
             Back to Sale
           </button>
 
-          <div className="flex gap-2">
-            {photos.length > 0 && (
+          <div className="flex items-center gap-3">
+            {/* Connection Status Indicator */}
+            <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium ${
+              isOnline 
+                ? 'bg-green-100 text-green-700' 
+                : 'bg-gray-100 text-gray-700'
+            }`}>
+              {isOnline ? (
+                <>
+                  <Wifi className="w-4 h-4" />
+                  Online
+                </>
+              ) : (
+                <>
+                  <WifiOff className="w-4 h-4" />
+                  Offline
+                </>
+              )}
+            </div>
+
+            {photos.length > 0 && isOnline && (
               <button
                 onClick={handleEnrichWithAI}
                 disabled={enriching}
@@ -261,18 +327,31 @@ export default function LotDetail() {
                   />
                 </div>
 
+                {/* Auto-assigned Lot Number - Read Only */}
                 <div>
                   <label htmlFor="lot_number" className="block text-sm font-medium text-gray-700 mb-1">
-                    Lot Number
+                    Lot Number {isTemporaryLotNumber && '(Temporary)'}
                   </label>
-                  <input
-                    id="lot_number"
-                    type="number"
-                    value={lot.lot_number || ''}
-                    onChange={(e) => setLot({ ...lot, lot_number: e.target.value ? parseInt(e.target.value) : undefined })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    placeholder="e.g., 101"
-                  />
+                  <div className="relative">
+                    <input
+                      id="lot_number"
+                      type="text"
+                      value={lot.lot_number || 'Assigning...'}
+                      readOnly
+                      className="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-md text-gray-700 cursor-not-allowed"
+                      title="Lot number is automatically assigned"
+                    />
+                    {isTemporaryLotNumber && (
+                      <div className="mt-1 text-xs text-amber-600">
+                        📱 This is a temporary number. It will be replaced with a sequential number when you sync online.
+                      </div>
+                    )}
+                    {!isTemporaryLotNumber && lot.lot_number && (
+                      <div className="mt-1 text-xs text-gray-500">
+                        ✓ Auto-assigned sequential number
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div>
@@ -283,8 +362,8 @@ export default function LotDetail() {
                     id="description"
                     value={lot.description || ''}
                     onChange={(e) => setLot({ ...lot, description: e.target.value })}
-                    rows={4}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+                    rows={6}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
                     placeholder="Detailed description of the item..."
                   />
                 </div>

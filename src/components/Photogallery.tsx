@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import type { Photo } from '../types';
+import type { Photo } from '../Types';
 import { 
   Camera, 
   Upload, 

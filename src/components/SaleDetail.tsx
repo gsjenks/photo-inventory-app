@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Package, Users, FileText, BarChart3, ArrowLeft } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import type { Sale, Lot, Contact, Document } from '../types';
+import type { Sale, Lot, Contact, Document } from '../Types';
 import ScrollableTabs from './ScrollableTabs';
 import LotsList from './LotsList';
 import ContactsList from './ContactsList';

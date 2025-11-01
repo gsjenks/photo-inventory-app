@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import type { Sale } from '../types';
+import type { Sale } from '../Types';
 import { supabase } from '../lib/supabase';
 import { X } from 'lucide-react';
 

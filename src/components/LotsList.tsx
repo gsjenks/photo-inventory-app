@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { Lot } from '../types';
+import type { Lot } from '../Types';
 import { Plus, Package, Edit, Trash2, Image, Star } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import LotViewModal from './Lotviewmodal';

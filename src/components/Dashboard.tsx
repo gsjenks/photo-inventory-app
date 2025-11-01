@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { supabase } from '../lib/supabase';
-import type { Sale, Contact, Document } from '../types';
+import type { Sale, Contact, Document } from '../Types';
 import { 
   Settings,
   Package,
