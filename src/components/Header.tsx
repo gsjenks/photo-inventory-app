@@ -18,7 +18,7 @@ export default function Header({ onSearchClick: _onSearchClick }: HeaderProps) {
       <header className="bg-white border-b border-gray-200 sticky top-0 z-50 shadow-sm">
         <div className="px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <h1 className="text-xl font-bold text-indigo-600">CatalogPro</h1>
+            <h1 className="text-xl font-bold text-indigo-600">CatalogListPro</h1>
             
             {currentCompany && companies.length > 0 && (
               <div className="relative">

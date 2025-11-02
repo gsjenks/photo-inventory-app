@@ -1,6 +1,6 @@
 {
-  "name": "CatalogPro - AI-Powered Inventory Management",
-  "short_name": "CatalogPro",
+  "name": "CatalogListPro - AI-Powered Inventory Management",
+  "short_name": "CatalogListPro",
   "description": "AI-powered inventory management for auction houses, estate sales, and collectors with smart cataloging features",
   "start_url": "/",
   "display": "standalone",

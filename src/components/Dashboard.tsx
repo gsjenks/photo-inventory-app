@@ -299,14 +299,14 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header with gradient - using CatalogPro Indigo colors */}
+      {/* Header with gradient - using CatalogListPro Indigo colors */}
       <div className="bg-gradient-to-br from-indigo-600 to-indigo-700 shadow-lg">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           {/* Top bar */}
           <div className="flex items-center justify-between py-4">
             <div>
               <h1 className="text-2xl font-bold text-white">
-                {currentCompany?.name || 'CatalogPro'}
+                {currentCompany?.name || 'CatalogListPro'}
               </h1>
               <p className="text-sm text-indigo-100 mt-1">
                 {user?.email}
