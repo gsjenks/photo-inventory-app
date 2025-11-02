@@ -330,25 +330,53 @@ export default function LotDetail() {
                 {/* Auto-assigned Lot Number - Read Only */}
                 <div>
                   <label htmlFor="lot_number" className="block text-sm font-medium text-gray-700 mb-1">
-                    Lot Number {isTemporaryLotNumber && '(Temporary)'}
+                    Lot Number
+                    <span className="ml-2 text-xs font-normal text-gray-500">(Auto-assigned)</span>
                   </label>
                   <div className="relative">
                     <input
                       id="lot_number"
                       type="text"
-                      value={lot.lot_number || 'Assigning...'}
+                      value={(() => {
+                        if (lot.lot_number === undefined || lot.lot_number === null) {
+                          return 'Assigning...';
+                        }
+                        const numValue = typeof lot.lot_number === 'string' 
+                          ? parseFloat(lot.lot_number) 
+                          : lot.lot_number;
+                        
+                        if (isNaN(numValue)) {
+                          return 'Assigning...';
+                        }
+                        
+                        return isTemporaryLotNumber 
+                          ? `TEMP-${Math.abs(numValue)}` 
+                          : `#${numValue}`;
+                      })()}
                       readOnly
-                      className="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-md text-gray-700 cursor-not-allowed"
-                      title="Lot number is automatically assigned"
+                      disabled
+                      className={`w-full px-3 py-2 border rounded-md font-semibold cursor-not-allowed ${
+                        isTemporaryLotNumber 
+                          ? 'bg-amber-50 border-amber-300 text-amber-700' 
+                          : 'bg-indigo-50 border-indigo-300 text-indigo-700'
+                      }`}
+                      title="Lot numbers are automatically assigned and cannot be edited"
                     />
                     {isTemporaryLotNumber && (
-                      <div className="mt-1 text-xs text-amber-600">
-                        📱 This is a temporary number. It will be replaced with a sequential number when you sync online.
+                      <div className="mt-2 flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-md">
+                        <WifiOff className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-xs font-medium text-amber-800">Offline Mode</p>
+                          <p className="text-xs text-amber-700 mt-1">
+                            This temporary number will be replaced with a permanent sequential number when you connect to the internet and sync.
+                          </p>
+                        </div>
                       </div>
                     )}
                     {!isTemporaryLotNumber && lot.lot_number && (
-                      <div className="mt-1 text-xs text-gray-500">
-                        ✓ Auto-assigned sequential number
+                      <div className="mt-2 flex items-center gap-2 text-xs text-indigo-600">
+                        <Wifi className="w-3 h-3" />
+                        <span>Sequential number assigned</span>
                       </div>
                     )}
                   </div>
