@@ -102,7 +102,7 @@ export default function LotDetail() {
         .from('photos')
         .select('*')
         .eq('lot_id', lotId)
-        .order('display_order', { ascending: true });
+        .order('created_at', { ascending: true });
 
       if (photosError) throw photosError;
       setPhotos(photosData || []);

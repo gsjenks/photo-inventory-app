@@ -183,7 +183,9 @@ export default function EnhancedPhotoGallery({
             file_path: fileName,
             file_name: file.name,
             is_primary: isPrimary,
-          });
+          })
+          .select()
+          .single();
 
         if (dbError) throw dbError;
       }
