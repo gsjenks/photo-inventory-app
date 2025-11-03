@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import type { Photo } from '../types';
+import { takePicture, selectFromGallery } from '../lib/camera';
 import { 
   Camera, 
   Upload, 
@@ -9,7 +10,8 @@ import {
   Check, 
   Sparkles,
   X,
-  Plus
+  Plus,
+  Image as ImageIcon
 } from 'lucide-react';
 
 interface EnhancedPhotoGalleryProps {
@@ -43,10 +45,6 @@ export default function EnhancedPhotoGallery({
 }: EnhancedPhotoGalleryProps) {
   const [selectedPhotos, setSelectedPhotos] = useState<Set<string>>(new Set());
   const [uploading, setUploading] = useState(false);
-  const [showCameraModal, setShowCameraModal] = useState(false);
-  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const [enhancementOptions, setEnhancementOptions] = useState<AIEnhancementOptions>({
     applyToAll: false,
     backgroundColor: 'none',
@@ -71,65 +69,63 @@ export default function EnhancedPhotoGallery({
     setSelectedPhotos(newSelected);
   };
 
-  // Start camera
-  const startCamera = async () => {
+  // Capture photo using native camera
+  const handleTakePhoto = async () => {
+    if (lotId === 'new') {
+      alert('Please save the lot first before adding photos');
+      return;
+    }
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: 'environment' } 
-      });
-      setCameraStream(stream);
-      setShowCameraModal(true);
+      setUploading(true);
+      const webPath = await takePicture();
       
-      // Set video source after modal opens
-      setTimeout(() => {
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-        }
-      }, 100);
-    } catch (error) {
-      console.error('Error accessing camera:', error);
-      alert('Unable to access camera. Please check permissions or use the Upload button instead.');
+      if (webPath) {
+        // Convert webPath to File object
+        const file = await urlToFile(webPath, `camera_${Date.now()}.jpg`);
+        await uploadPhotos([file]);
+      }
+    } catch (error: any) {
+      console.error('Error taking photo:', error);
+      if (!error.message?.includes('cancelled')) {
+        alert('Failed to take photo. Please check camera permissions.');
+      }
+    } finally {
+      setUploading(false);
     }
   };
 
-  // Stop camera
-  const stopCamera = () => {
-    if (cameraStream) {
-      cameraStream.getTracks().forEach(track => track.stop());
-      setCameraStream(null);
+  // Select photo from gallery
+  const handleSelectFromGallery = async () => {
+    if (lotId === 'new') {
+      alert('Please save the lot first before adding photos');
+      return;
     }
-    setShowCameraModal(false);
+
+    try {
+      setUploading(true);
+      const webPath = await selectFromGallery();
+      
+      if (webPath) {
+        // Convert webPath to File object
+        const file = await urlToFile(webPath, `gallery_${Date.now()}.jpg`);
+        await uploadPhotos([file]);
+      }
+    } catch (error: any) {
+      console.error('Error selecting photo:', error);
+      if (!error.message?.includes('cancelled')) {
+        alert('Failed to select photo from gallery.');
+      }
+    } finally {
+      setUploading(false);
+    }
   };
 
-  // Capture photo from camera
-  const capturePhoto = async () => {
-    if (!videoRef.current || !canvasRef.current) return;
-
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    
-    // Set canvas dimensions to match video
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    
-    // Draw video frame to canvas
-    const context = canvas.getContext('2d');
-    if (!context) return;
-    
-    context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    
-    // Convert canvas to blob
-    canvas.toBlob(async (blob) => {
-      if (!blob) return;
-      
-      // Create file from blob
-      const file = new File([blob], `camera_${Date.now()}.jpg`, { type: 'image/jpeg' });
-      
-      // Upload the photo
-      await uploadPhotos([file]);
-      
-      // Keep camera open for more photos
-    }, 'image/jpeg', 0.9);
+  // Helper function to convert URL/webPath to File object
+  const urlToFile = async (url: string, filename: string): Promise<File> => {
+    const response = await fetch(url);
+    const blob = await response.blob();
+    return new File([blob], filename, { type: blob.type || 'image/jpeg' });
   };
 
   // Select all photos
@@ -346,24 +342,35 @@ export default function EnhancedPhotoGallery({
       <div className="flex items-center gap-3 flex-wrap">
         {/* Camera Button - Opens native camera interface */}
         <button
-          onClick={startCamera}
+          onClick={handleTakePhoto}
           disabled={uploading || lotId === 'new'}
           className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors shadow-sm"
           title="Take photo with device camera"
         >
           <Camera className="w-4 h-4" />
-          Camera
+          {uploading ? 'Saving...' : 'Camera'}
         </button>
 
-        {/* Upload Button - For selecting existing photos from gallery */}
+        {/* Gallery Button - Opens native photo gallery */}
         <button
-          onClick={() => fileInputRef.current?.click()}
+          onClick={handleSelectFromGallery}
           disabled={uploading || lotId === 'new'}
           className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors shadow-sm"
           title="Select photos from gallery"
         >
+          <ImageIcon className="w-4 h-4" />
+          {uploading ? 'Saving...' : 'Gallery'}
+        </button>
+
+        {/* Upload Button - Fallback for web browsers */}
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          disabled={uploading || lotId === 'new'}
+          className="flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors shadow-sm"
+          title="Upload from computer (web only)"
+        >
           <Upload className="w-4 h-4" />
-          Upload
+          {uploading ? 'Uploading...' : 'Upload'}
         </button>
         <input
           ref={fileInputRef}
@@ -607,56 +614,6 @@ export default function EnhancedPhotoGallery({
               </div>
             );
           })}
-        </div>
-      )}
-
-      {/* Camera Modal */}
-      {showCameraModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
-            {/* Modal Header */}
-            <div className="flex items-center justify-between p-4 border-b border-gray-200">
-              <h2 className="text-xl font-semibold text-gray-900">Camera</h2>
-              <button
-                onClick={stopCamera}
-                className="p-2 hover:bg-gray-100 rounded-full transition-colors"
-                title="Close camera"
-              >
-                <X className="w-5 h-5 text-gray-500" />
-              </button>
-            </div>
-
-            {/* Camera Preview */}
-            <div className="flex-1 bg-black flex items-center justify-center p-4">
-              <div className="relative w-full max-w-2xl aspect-video">
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  className="w-full h-full object-cover rounded-lg"
-                />
-                <canvas ref={canvasRef} className="hidden" />
-              </div>
-            </div>
-
-            {/* Camera Controls */}
-            <div className="flex items-center justify-center gap-4 p-6 border-t border-gray-200 bg-gray-50">
-              <button
-                onClick={capturePhoto}
-                disabled={uploading}
-                className="flex items-center gap-2 px-8 py-3 bg-indigo-600 text-white rounded-full hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed transition-colors shadow-lg text-lg font-medium"
-              >
-                <Camera className="w-5 h-5" />
-                {uploading ? 'Saving...' : 'Capture Photo'}
-              </button>
-              <button
-                onClick={stopCamera}
-                className="px-6 py-3 border-2 border-gray-300 text-gray-700 rounded-full hover:bg-gray-100 transition-colors font-medium"
-              >
-                Done
-              </button>
-            </div>
-          </div>
         </div>
       )}
 
