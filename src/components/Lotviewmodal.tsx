@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import type { Lot, Photo } from '../Types';
+import type { Lot, Photo } from '../types';
 import { X, Edit, Trash2, ChevronLeft, ChevronRight, Star, ArrowLeft } from 'lucide-react';
 
 interface LotViewModalProps {

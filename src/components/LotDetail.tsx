@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { enrichLotData } from '../lib/Gemini';
-import type { Lot, Photo } from '../Types';
+import type { Lot, Photo } from '../types';
 import { ArrowLeft, Save, Sparkles, Wifi, WifiOff } from 'lucide-react';
 import PhotoGallery from './Photogallery';
 import * as LotNumberService from '../services/LotNumberService';

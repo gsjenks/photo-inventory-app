@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { Sale } from '../Types';
+import type { Sale } from '../types';
 import { Plus, Calendar, MapPin, Edit, Trash2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useApp } from '../context/AppContext';
