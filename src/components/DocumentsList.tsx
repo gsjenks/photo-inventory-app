@@ -477,6 +477,7 @@ export default function DocumentsList({ documents, companyId, saleId, onRefresh 
           Documents
         </h2>
         <button
+        data-add-document         // ← ADD THIS LINE
           onClick={openAddModal}
           className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 shadow-sm transition-all"
         >

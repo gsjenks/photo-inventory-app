@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Sale } from '../types';
-import { Plus, Calendar, MapPin, Edit, Trash2 } from 'lucide-react';
+import { Calendar, MapPin, Edit, Trash2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useApp } from '../context/AppContext';
 import SaleModal from '../components/SaleModal';
@@ -51,30 +51,13 @@ export default function SalesList({ sales, onRefresh }: SalesListProps) {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-lg font-semibold text-gray-900">All Sales</h2>
-        <button
-          onClick={() => {
-            setEditingSale(null);
-            setShowModal(true);
-          }}
-          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 shadow-sm transition-all"
-        >
-          <Plus className="w-4 h-4" />
-          New Sale
-        </button>
-      </div>
+      {/* REMOVED: Inline "New Sale" button - now handled by footer */}
 
       {sales.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-12 text-gray-500">
           <Calendar className="w-12 h-12 text-gray-400 mb-4" />
           <p className="text-sm text-gray-600 mb-4">No sales yet</p>
-          <button
-            onClick={() => setShowModal(true)}
-            className="text-indigo-600 hover:text-indigo-700 font-medium text-sm transition-colors"
-          >
-            Create your first sale
-          </button>
+          <p className="text-xs text-gray-500">Use the "New Sale" button at the bottom to create your first sale</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

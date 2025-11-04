@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Lot } from '../types';
-import { Plus, Package, Edit, Trash2, Image, Star } from 'lucide-react';
+import { Package, Edit, Trash2, Image, Star } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import offlineStorage from '../services/Offlinestorage';
 import LotViewModal from './Lotviewmodal';
 
 interface LotsListProps {
@@ -14,47 +15,75 @@ interface LotsListProps {
 export default function LotsList({ lots, saleId, onRefresh }: LotsListProps) {
   const navigate = useNavigate();
   const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
-  const [_loadingPhotos, setLoadingPhotos] = useState(false);
   const [selectedLot, setSelectedLot] = useState<Lot | null>(null);
 
   // Load primary photos for all lots
   useEffect(() => {
-    loadPrimaryPhotos();
+    if (lots?.length > 0) {
+      loadPrimaryPhotos();
+    }
   }, [lots]);
 
-  const loadPrimaryPhotos = async () => {
-    if (lots.length === 0) return;
+  // Cleanup object URLs on unmount to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      Object.values(photoUrls).forEach(url => {
+        if (url.startsWith('blob:')) {
+          URL.revokeObjectURL(url);
+        }
+      });
+    };
+  }, [photoUrls]);
 
-    setLoadingPhotos(true);
+  const loadPrimaryPhotos = async () => {
+    if (!lots?.length) return;
+
     try {
       const urls: Record<string, string> = {};
       
       for (const lot of lots) {
-        // Get primary photo for this lot
-        const { data: photos } = await supabase
-          .from('photos')
-          .select('*')
-          .eq('lot_id', lot.id)
-          .eq('is_primary', true)
-          .limit(1);
+        if (!lot?.id) continue;
 
-        if (photos && photos.length > 0) {
-          const photo = photos[0];
-          const { data: urlData } = await supabase.storage
-            .from('photos')
-            .createSignedUrl(photo.file_path, 3600);
-
-          if (urlData?.signedUrl) {
-            urls[lot.id] = urlData.signedUrl;
+        // Try loading from IndexedDB first (for local/offline photos)
+        const localPhotos = await offlineStorage.getPhotosByLot(lot.id);
+        const primaryLocal = localPhotos.find(p => p.is_primary);
+        
+        if (primaryLocal) {
+          const blob = await offlineStorage.getPhotoBlob(primaryLocal.id);
+          if (blob) {
+            urls[lot.id] = URL.createObjectURL(blob);
+            continue; // Found local photo, skip Supabase
           }
+        }
+
+        // If not found locally, try Supabase
+        try {
+          const { data: photos } = await supabase
+            .from('photos')
+            .select('*')
+            .eq('lot_id', lot.id)
+            .eq('is_primary', true)
+            .limit(1);
+
+          if (photos && photos.length > 0) {
+            const photo = photos[0];
+            const { data: urlData } = await supabase.storage
+              .from('photos')
+              .createSignedUrl(photo.file_path, 3600);
+
+            if (urlData?.signedUrl) {
+              urls[lot.id] = urlData.signedUrl;
+            }
+          }
+        } catch (supabaseError) {
+          // Silently handle Supabase errors (might be offline)
+          console.debug('Supabase photo fetch failed:', supabaseError);
         }
       }
       
       setPhotoUrls(urls);
     } catch (error) {
       console.error('Error loading primary photos:', error);
-    } finally {
-      setLoadingPhotos(false);
     }
   };
 
@@ -101,27 +130,11 @@ export default function LotsList({ lots, saleId, onRefresh }: LotsListProps) {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-lg font-semibold text-gray-900">All Items</h2>
-        <button
-          onClick={() => navigate(`/sales/${saleId}/lots/new`)}
-          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 shadow-sm transition-all"
-        >
-          <Plus className="w-4 h-4" />
-          New Item
-        </button>
-      </div>
-
-      {lots.length === 0 ? (
+      {!lots?.length ? (
         <div className="flex flex-col items-center justify-center py-12 text-gray-500">
           <Package className="w-12 h-12 text-gray-400 mb-4" />
           <p className="text-sm text-gray-600 mb-4">No items yet</p>
-          <button
-            onClick={() => navigate(`/sales/${saleId}/lots/new`)}
-            className="text-indigo-600 hover:text-indigo-700 font-medium text-sm transition-colors"
-          >
-            Add your first item
-          </button>
+          <p className="text-xs text-gray-500">Use the "New Item" button at the bottom to add your first item</p>
         </div>
       ) : (
         <div className="space-y-4">

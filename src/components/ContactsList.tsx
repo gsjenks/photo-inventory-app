@@ -205,6 +205,7 @@ export default function ContactsList({ contacts, companyId, saleId, onRefresh }:
           <Users className="w-12 h-12 text-gray-400 mb-4" />
           <p className="text-sm text-gray-600 mb-4">No contacts yet</p>
           <button
+          data-add-contact
             className="text-indigo-600 hover:text-indigo-700 font-medium text-sm transition-colors"
             onClick={openAddModal}
           >

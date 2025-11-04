@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Package, Users, FileText, BarChart3, ArrowLeft } from 'lucide-react';
+import { Package, Users, FileText, BarChart3, ArrowLeft, Plus, Camera, Upload } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { useFooter } from '../context/FooterContext';
 import type { Sale, Lot, Contact, Document } from '../types';
 import ScrollableTabs from './ScrollableTabs';
 import LotsList from './LotsList';
@@ -11,6 +12,7 @@ import DocumentsList from './DocumentsList';
 export default function SaleDetail() {
   const { saleId } = useParams<{ saleId: string }>();
   const navigate = useNavigate();
+  const { setActions, clearActions } = useFooter();
   const [sale, setSale] = useState<Sale | null>(null);
   const [lots, setLots] = useState<Lot[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -40,6 +42,73 @@ export default function SaleDetail() {
     loadContacts();
     loadDocuments();
   }, [saleId]);
+
+  // Set footer actions based on active tab
+  useEffect(() => {
+    switch (activeTab) {
+      case 'items':
+        setActions([
+          {
+            id: 'camera',
+            label: 'Camera',
+            icon: <Camera className="w-4 h-4" />,
+            onClick: () => {
+              // This would open camera for direct photo capture
+              alert('Camera feature coming soon for direct photo capture');
+            },
+            variant: 'secondary'
+          },
+          {
+            id: 'add-lot',
+            label: 'New Item',
+            icon: <Plus className="w-4 h-4" />,
+            onClick: () => navigate(`/sales/${saleId}/lots/new`),
+            variant: 'primary'
+          }
+        ]);
+        break;
+      case 'contacts':
+        setActions([
+          {
+            id: 'add-contact',
+            label: 'New Contact',
+            icon: <Plus className="w-4 h-4" />,
+            onClick: () => {
+              // Trigger contact add from ContactsList
+              const addButton = document.querySelector('[data-add-contact]') as HTMLButtonElement;
+              if (addButton) addButton.click();
+            },
+            variant: 'primary'
+          }
+        ]);
+        break;
+      case 'documents':
+        setActions([
+          {
+            id: 'add-document',
+            label: 'Upload Document',
+            icon: <Upload className="w-4 h-4" />,
+            onClick: () => {
+              // Trigger document upload from DocumentsList
+              const addButton = document.querySelector('[data-add-document]') as HTMLButtonElement;
+              if (addButton) addButton.click();
+            },
+            variant: 'primary'
+          }
+        ]);
+        break;
+      case 'reports':
+        clearActions();
+        break;
+      default:
+        clearActions();
+    }
+
+    // Cleanup on unmount
+    return () => {
+      clearActions();
+    };
+  }, [activeTab, saleId, setActions, clearActions, navigate]);
 
   const loadSale = async () => {
     if (!saleId) return;
@@ -237,7 +306,7 @@ export default function SaleDetail() {
       });
     }
     
-    // Apply contact_type filter
+    // Apply contact type filter
     const filter = activeFilters.contacts;
     if (filter) {
       filtered = filtered.filter(contact => (contact as any).contact_type?.toLowerCase() === filter.toLowerCase());
@@ -246,7 +315,7 @@ export default function SaleDetail() {
     return filtered;
   };
 
-  // COMPREHENSIVE DOCUMENTS FILTER - Searches ALL 5 metadata fields
+  // COMPREHENSIVE DOCUMENTS FILTER
   const getFilteredDocuments = () => {
     let filtered = [...documents];
     const query = searchQueries.documents?.toLowerCase().trim();
@@ -255,14 +324,9 @@ export default function SaleDetail() {
     if (query) {
       filtered = filtered.filter(doc => {
         return (
-          // File Names
           doc.name?.toLowerCase().includes(query) ||
           doc.file_name?.toLowerCase().includes(query) ||
-          
-          // Content
           doc.description?.toLowerCase().includes(query) ||
-          
-          // Types
           doc.document_type?.toLowerCase().includes(query) ||
           doc.file_type?.toLowerCase().includes(query)
         );
@@ -363,7 +427,7 @@ export default function SaleDetail() {
 
   if (loading) {
     return (
-      <div className="max-w-7xl mx-auto px-4 py-6">
+      <div className="max-w-7xl mx-auto px-4 py-6 pb-20">
         <div className="animate-pulse">
           <div className="h-8 bg-gray-200 rounded w-1/4 mb-4"></div>
           <div className="h-4 bg-gray-200 rounded w-1/3"></div>
@@ -374,14 +438,14 @@ export default function SaleDetail() {
 
   if (!sale) {
     return (
-      <div className="max-w-7xl mx-auto px-4 py-6">
+      <div className="max-w-7xl mx-auto px-4 py-6 pb-20">
         <p className="text-red-600">Sale not found</p>
       </div>
     );
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-6">
+    <div className="max-w-7xl mx-auto px-4 py-6 pb-20">
       {/* Header */}
       <div className="mb-6">
         <button

@@ -3,6 +3,7 @@ import SyncService from './SyncService';
 class ConnectivityService {
   private isOnline = navigator.onLine;
   private syncInterval: ReturnType<typeof setInterval> | null = null;
+  private listeners: Set<(isOnline: boolean) => void> = new Set();
 
   constructor() {
     this.setupEventListeners();
@@ -16,6 +17,7 @@ class ConnectivityService {
   private handleOnline(): void {
     console.log('Connection restored');
     this.isOnline = true;
+    this.notifyListeners(true);
     this.startAutoSync();
     this.performSync();
   }
@@ -23,7 +25,32 @@ class ConnectivityService {
   private handleOffline(): void {
     console.log('Connection lost');
     this.isOnline = false;
+    this.notifyListeners(false);
     this.stopAutoSync();
+  }
+
+  private notifyListeners(isOnline: boolean): void {
+    this.listeners.forEach(listener => {
+      try {
+        listener(isOnline);
+      } catch (error) {
+        console.error('Error in connectivity listener:', error);
+      }
+    });
+  }
+
+  /**
+   * Subscribe to connectivity status changes
+   * @param callback Function to call when connectivity changes
+   * @returns Unsubscribe function
+   */
+  onStatusChange(callback: (isOnline: boolean) => void): () => void {
+    this.listeners.add(callback);
+    
+    // Return unsubscribe function
+    return () => {
+      this.listeners.delete(callback);
+    };
   }
 
   private startAutoSync(): void {
@@ -63,6 +90,7 @@ class ConnectivityService {
 
   destroy(): void {
     this.stopAutoSync();
+    this.listeners.clear();
     window.removeEventListener('online', this.handleOnline);
     window.removeEventListener('offline', this.handleOffline);
   }

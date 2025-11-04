@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
+import { useFooter } from '../context/FooterContext';
 import { supabase } from '../lib/supabase';
 import type { Sale, Contact, Document } from '../types';
 import { 
@@ -8,20 +9,27 @@ import {
   TrendingUp,
   Calendar,
   FileText,
-  Users
+  Users,
+  Plus,
+  Upload
 } from 'lucide-react';
 import SalesList from './SalesList';
 import ContactsList from './ContactsList';
 import DocumentsList from './DocumentsList';
 import ScrollableTabs from './ScrollableTabs';
+import SaleModal from './SaleModal';
 
 export default function Dashboard() {
   const { user, currentCompany } = useApp();
+  const { setActions, clearActions } = useFooter();
   const [activeTab, setActiveTab] = useState('sales');
   const [sales, setSales] = useState<Sale[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
+  
+  // Modal states
+  const [showSaleModal, setShowSaleModal] = useState(false);
   
   // Search and filter state
   const [searchQueries, setSearchQueries] = useState<Record<string, string>>({
@@ -99,6 +107,60 @@ export default function Dashboard() {
       loadDashboardData();
     }
   }, [currentCompany]);
+
+  // Set footer actions based on active tab
+  useEffect(() => {
+    switch (activeTab) {
+      case 'sales':
+        setActions([
+          {
+            id: 'add-sale',
+            label: 'New Sale',
+            icon: <Plus className="w-4 h-4" />,
+            onClick: () => setShowSaleModal(true),
+            variant: 'primary'
+          }
+        ]);
+        break;
+      case 'contacts':
+        setActions([
+          {
+            id: 'add-contact',
+            label: 'New Contact',
+            icon: <Plus className="w-4 h-4" />,
+            onClick: () => {
+              // Trigger contact add from ContactsList
+              const addButton = document.querySelector('[data-add-contact]') as HTMLButtonElement;
+              if (addButton) addButton.click();
+            },
+            variant: 'primary'
+          }
+        ]);
+        break;
+      case 'documents':
+        setActions([
+          {
+            id: 'add-document',
+            label: 'Upload Document',
+            icon: <Upload className="w-4 h-4" />,
+            onClick: () => {
+              // Trigger document upload from DocumentsList
+              const addButton = document.querySelector('[data-add-document]') as HTMLButtonElement;
+              if (addButton) addButton.click();
+            },
+            variant: 'primary'
+          }
+        ]);
+        break;
+      default:
+        clearActions();
+    }
+
+    // Cleanup on unmount
+    return () => {
+      clearActions();
+    };
+  }, [activeTab, setActions, clearActions]);
 
   // Search handler
   const handleSearch = (tabId: string, query: string) => {
@@ -223,7 +285,7 @@ export default function Dashboard() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center pb-20">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto mb-4"></div>
           <p className="text-gray-600">Loading dashboard...</p>
@@ -298,7 +360,7 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 pb-20">
       {/* Header with gradient - using CatalogListPro Indigo colors */}
       <div className="bg-gradient-to-br from-indigo-600 to-indigo-700 shadow-lg">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -399,6 +461,19 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* Sale Modal */}
+      {showSaleModal && (
+        <SaleModal
+          sale={null}
+          companyId={currentCompany?.id || ''}
+          onClose={() => setShowSaleModal(false)}
+          onSave={() => {
+            setShowSaleModal(false);
+            loadDashboardData();
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -1,11 +1,13 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AppProvider, useApp } from './context/AppContext';
+import { FooterProvider } from './context/FooterContext';
 import Auth from './components/Auth';
 import CompanySetup from './components/CompanySetup';
 import Dashboard from './components/Dashboard';
 import SaleDetail from './components/SaleDetail';
 import LotDetail from './components/LotDetail';
 import Header from './components/Header';
+import ContextFooter from './components/Contextfooter';
 
 function AppContent() {
   const { user, loading, currentCompany } = useApp();
@@ -38,6 +40,7 @@ function AppContent() {
         <Route path="/sales/:saleId/lots/:lotId" element={<LotDetail />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      <ContextFooter />
     </div>
   );
 }
@@ -46,7 +49,9 @@ function App() {
   return (
     <BrowserRouter>
       <AppProvider>
-        <AppContent />
+        <FooterProvider>
+          <AppContent />
+        </FooterProvider>
       </AppProvider>
     </BrowserRouter>
   );
