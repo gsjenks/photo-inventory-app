@@ -374,26 +374,17 @@ export default function Dashboard() {
                 {user?.email}
               </p>
             </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => alert('Settings coming soon')}
-                className="p-2 rounded-full hover:bg-indigo-500 text-white transition-all"
-                aria-label="Settings"
-              >
-                <Settings className="w-5 h-5" />
-              </button>
-            </div>
           </div>
 
           {/* Stats Cards - Single Row */}
           <div className="grid grid-cols-3 gap-4 pb-6">
             <div className="bg-white/10 backdrop-blur-sm rounded-lg p-4 border border-white/20">
               <div className="flex items-center gap-3">
-                <div className="p-2 bg-white/20 rounded-lg">
+                <div className="p-2 bg-white/20 rounded-lg flex-shrink-0">
                   <Calendar className="w-5 h-5 text-white" />
                 </div>
-                <div>
-                  <p className="text-indigo-100 text-xs font-medium">Active Sales</p>
+                <div className="min-w-0 flex-1">
+                  <p className="text-indigo-100 text-xs font-medium truncate">Active Sales</p>
                   <p className="text-white text-2xl font-bold">{stats.activeSales}</p>
                 </div>
               </div>
@@ -401,11 +392,11 @@ export default function Dashboard() {
 
             <div className="bg-white/10 backdrop-blur-sm rounded-lg p-4 border border-white/20">
               <div className="flex items-center gap-3">
-                <div className="p-2 bg-white/20 rounded-lg">
+                <div className="p-2 bg-white/20 rounded-lg flex-shrink-0">
                   <TrendingUp className="w-5 h-5 text-white" />
                 </div>
-                <div>
-                  <p className="text-indigo-100 text-xs font-medium">Upcoming</p>
+                <div className="min-w-0 flex-1">
+                  <p className="text-indigo-100 text-xs font-medium truncate">Upcoming</p>
                   <p className="text-white text-2xl font-bold">{stats.upcomingSales}</p>
                 </div>
               </div>
@@ -413,11 +404,11 @@ export default function Dashboard() {
 
             <div className="bg-white/10 backdrop-blur-sm rounded-lg p-4 border border-white/20">
               <div className="flex items-center gap-3">
-                <div className="p-2 bg-white/20 rounded-lg">
+                <div className="p-2 bg-white/20 rounded-lg flex-shrink-0">
                   <Package className="w-5 h-5 text-white" />
                 </div>
-                <div>
-                  <p className="text-indigo-100 text-xs font-medium">Total Lots</p>
+                <div className="min-w-0 flex-1">
+                  <p className="text-indigo-100 text-xs font-medium truncate">Total Lots</p>
                   <p className="text-white text-2xl font-bold">{stats.totalLots.toLocaleString()}</p>
                 </div>
               </div>

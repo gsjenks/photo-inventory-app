@@ -16,19 +16,19 @@ export default function Header({ onSearchClick: _onSearchClick }: HeaderProps) {
   return (
     <>
       <header className="bg-white border-b border-gray-200 sticky top-0 z-50 shadow-sm">
-        <div className="px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <h1 className="text-xl font-bold text-indigo-600">CatalogListPro</h1>
+        <div className="px-2 sm:px-4 py-3 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 sm:gap-4 min-w-0 flex-shrink">
+            <h1 className="text-lg sm:text-xl font-bold text-indigo-600 whitespace-nowrap">CatalogListPro</h1>
             
             {currentCompany && companies.length > 0 && (
               <div className="relative">
                 <button
                   onClick={() => setShowCompanyMenu(!showCompanyMenu)}
-                  className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-gray-100 transition-colors"
+                  className="flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-2 rounded-lg hover:bg-gray-100 transition-colors"
                 >
-                  <Building2 className="w-4 h-4 text-gray-600" />
-                  <span className="font-medium text-gray-900">{currentCompany.name}</span>
-                  <ChevronDown className="w-4 h-4 text-gray-600" />
+                  <Building2 className="w-4 h-4 text-gray-600 flex-shrink-0" />
+                  <span className="hidden md:inline font-medium text-gray-900 truncate">{currentCompany.name}</span>
+                  <ChevronDown className="w-4 h-4 text-gray-600 flex-shrink-0" />
                 </button>
 
                 {showCompanyMenu && (
@@ -59,27 +59,24 @@ export default function Header({ onSearchClick: _onSearchClick }: HeaderProps) {
             )}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
             <button
               onClick={() => setShowSettings(true)}
-              className="flex items-center gap-2 px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+              className="flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
               title="Settings"
             >
               <Settings className="w-4 h-4" />
-              <span className="hidden sm:inline">Settings</span>
+              <span className="hidden lg:inline">Settings</span>
             </button>
             
-            <div className="flex items-center gap-3 px-3 py-2 border-l border-gray-200">
-              <span className="text-sm text-gray-600 hidden sm:inline">{user?.email}</span>
-              <button
-                onClick={signOut}
-                className="flex items-center gap-2 px-3 py-2 text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                title="Sign Out"
-              >
-                <LogOut className="w-4 h-4" />
-                <span className="hidden sm:inline text-sm font-medium">Sign Out</span>
-              </button>
-            </div>
+            <button
+              onClick={signOut}
+              className="flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-2 text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+              title="Sign Out"
+            >
+              <LogOut className="w-4 h-4" />
+              <span className="hidden lg:inline text-sm font-medium">Sign Out</span>
+            </button>
           </div>
         </div>
       </header>

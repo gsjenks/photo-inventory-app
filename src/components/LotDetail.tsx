@@ -264,6 +264,13 @@ export default function LotDetail() {
     }
   };
 
+  // Helper function to convert text to title case
+  const toTitleCase = (str: string) => {
+    return str.toLowerCase().split(' ').map(word => {
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    }).join(' ');
+  };
+
   const handleSave = async () => {
     if (!lot.name || !saleId) {
       alert('Please enter an item name');
@@ -272,8 +279,10 @@ export default function LotDetail() {
 
     setSaving(true);
     try {
+
       const lotData = {
         ...lot,
+        name: toTitleCase(lot.name),
         sale_id: saleId,
         updated_at: new Date().toISOString()
       };
@@ -300,6 +309,8 @@ export default function LotDetail() {
             .eq('id', lotId);
 
           if (error) throw error;
+          // Update local state to reflect title case
+          setLot(prev => ({ ...prev, name: toTitleCase(prev.name || '') }));
         }
         
         alert('Item saved successfully');
@@ -325,6 +336,8 @@ export default function LotDetail() {
             table: 'lots',
             data: lotData
           });
+          // Update local state to reflect title case
+          setLot(prev => ({ ...prev, name: toTitleCase(prev.name || '') }));
         }
         
         alert('Item saved locally (will sync when online)');

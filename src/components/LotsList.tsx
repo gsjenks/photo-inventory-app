@@ -183,7 +183,7 @@ export default function LotsList({ lots, saleId, onRefresh }: LotsListProps) {
                       {/* Lot Name */}
                       <h3 
                         onClick={() => setSelectedLot(lot)}
-                        className="text-lg font-semibold text-gray-900 hover:text-indigo-600 transition-colors mb-2 cursor-pointer"
+                        className="text-lg font-semibold text-gray-900 hover:text-indigo-600 transition-colors mb-2 cursor-pointer capitalize"
                       >
                         {lot.name}
                       </h3>
