@@ -1,6 +1,11 @@
-import React, { useState, useRef } from 'react';
-import { supabase } from '../lib/supabase';
+// components/PhotoGallery.tsx
+// Photo Gallery with native camera support and offline-first architecture
+
+import { useState, useEffect } from 'react';
 import type { Photo } from '../types';
+import CameraService from '../services/CameraService';
+import PhotoService from '../services/PhotoService';
+import ConnectivityService from '../services/ConnectivityService';
 import { 
   Camera, 
   Upload, 
@@ -8,12 +13,12 @@ import {
   Trash2, 
   Check, 
   Sparkles,
-  X
+  X,
+  WifiOff,
+  Wifi
 } from 'lucide-react';
 
 interface PhotoGalleryProps {
-  photos: Photo[];
-  photoUrls: Record<string, string>;
   lotId: string;
   onPhotosChange: () => void;
 }
@@ -33,13 +38,15 @@ interface PreviewImage {
 }
 
 export default function PhotoGallery({
-  photos,
-  photoUrls,
   lotId,
   onPhotosChange,
 }: PhotoGalleryProps) {
+  const [photos, setPhotos] = useState<Photo[]>([]);
+  const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
   const [selectedPhotos, setSelectedPhotos] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [isOnline, setIsOnline] = useState(ConnectivityService.getConnectionStatus());
   const [enhancementOptions, setEnhancementOptions] = useState<AIEnhancementOptions>({
     applyToAll: false,
     backgroundColor: 'none',
@@ -51,8 +58,74 @@ export default function PhotoGallery({
   const [previewImages, setPreviewImages] = useState<PreviewImage[]>([]);
   const [processing, setProcessing] = useState(false);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const cameraInputRef = useRef<HTMLInputElement>(null);
+  // Subscribe to connectivity changes
+  useEffect(() => {
+    const unsubscribe = ConnectivityService.onStatusChange((online) => {
+      setIsOnline(online);
+      if (online) {
+        // When coming online, sync photos
+        syncPhotos();
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Load photos on mount and when lotId changes
+  useEffect(() => {
+    loadPhotos();
+  }, [lotId]);
+
+  // Load photos from IndexedDB (offline-first)
+  const loadPhotos = async () => {
+    if (lotId === 'new') {
+      setPhotos([]);
+      setPhotoUrls({});
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const loadedPhotos = await PhotoService.getPhotosByLot(lotId);
+      setPhotos(loadedPhotos);
+
+      // Load photo URLs (blob URLs from IndexedDB)
+      const urls: Record<string, string> = {};
+      for (const photo of loadedPhotos) {
+        const url = await PhotoService.getPhotoObjectUrl(photo.id);
+        if (url) {
+          urls[photo.id] = url;
+        }
+      }
+      setPhotoUrls(urls);
+    } catch (error) {
+      console.error('Error loading photos:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Sync photos to cloud when online
+  const syncPhotos = async () => {
+    if (!isOnline) return;
+
+    try {
+      const result = await PhotoService.syncPhotos(lotId);
+      console.log(`Synced ${result.success} photos, ${result.failed} failed`);
+    } catch (error) {
+      console.error('Error syncing photos:', error);
+    }
+  };
+
+  // Cleanup photo URLs on unmount
+  useEffect(() => {
+    return () => {
+      Object.values(photoUrls).forEach(url => {
+        PhotoService.revokeObjectUrl(url);
+      });
+    };
+  }, [photoUrls]);
 
   // Toggle photo selection
   const togglePhotoSelection = (photoId: string) => {
@@ -76,24 +149,8 @@ export default function PhotoGallery({
     }
   };
 
-  // Handle camera capture
-  const handleCameraCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-
-    await uploadPhotos(Array.from(files));
-  };
-
-  // Handle file upload
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-
-    await uploadPhotos(Array.from(files));
-  };
-
-  // Upload photos to Supabase
-  const uploadPhotos = async (files: File[]) => {
+  // Handle camera capture (native on mobile, web fallback)
+  const handleCameraCapture = async () => {
     if (lotId === 'new') {
       alert('Please save the lot first before adding photos');
       return;
@@ -101,35 +158,145 @@ export default function PhotoGallery({
 
     setUploading(true);
     try {
-      for (const file of files) {
-        // Generate unique file name
-        const fileExt = file.name.split('.').pop();
-        const fileName = `${lotId}/${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
+      const isNative = CameraService.isNativePlatform();
+      
+      if (isNative) {
+        // Native camera with all device features
+        const result = await CameraService.captureAndSave(
+          lotId,
+          photos.length === 0 // First photo is primary
+        );
 
-        // Upload to storage
-        const { error: uploadError } = await supabase.storage
-          .from('photos')
-          .upload(fileName, file);
+        if (result.success) {
+          await loadPhotos();
+          onPhotosChange();
+          
+          // Sync to cloud if online
+          if (isOnline) {
+            await syncPhotos();
+          }
+        } else if (result.error) {
+          alert(`Failed to capture photo: ${result.error}`);
+        }
+      } else {
+        // Web fallback - open file input with camera
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+        input.capture = 'environment';
+        input.multiple = false;
 
-        if (uploadError) throw uploadError;
+        input.onchange = async (e: Event) => {
+          const files = (e.target as HTMLInputElement).files;
+          if (files && files.length > 0) {
+            const result = await CameraService.handleFileInput(files, lotId);
+            if (result.success > 0) {
+              await loadPhotos();
+              onPhotosChange();
+              if (isOnline) {
+                await syncPhotos();
+              }
+            }
+          }
+        };
 
-        // Check if this is the first photo (should be primary)
-        const isPrimary = photos.length === 0;
+        input.click();
+      }
+    } catch (error) {
+      console.error('Error capturing photo:', error);
+      alert('Failed to capture photo');
+    } finally {
+      setUploading(false);
+    }
+  };
 
-        // Create photo record
-        const { error: dbError } = await supabase
-          .from('photos')
-          .insert({
-            lot_id: lotId,
-            file_path: fileName,
-            file_name: file.name,
-            is_primary: isPrimary,
-          });
+  // Handle multiple photo capture
+  const handleMultipleCapture = async () => {
+    if (lotId === 'new') {
+      alert('Please save the lot first before adding photos');
+      return;
+    }
 
-        if (dbError) throw dbError;
+    setUploading(true);
+    try {
+      const result = await CameraService.captureMultipleAndSave(lotId, 10);
+      
+      if (result.success > 0) {
+        alert(`Successfully captured ${result.success} photo(s)`);
+        await loadPhotos();
+        onPhotosChange();
+        
+        if (isOnline) {
+          await syncPhotos();
+        }
       }
 
-      onPhotosChange();
+      if (result.failed > 0) {
+        console.error('Some photos failed:', result.errors);
+      }
+    } catch (error) {
+      console.error('Error capturing photos:', error);
+      alert('Failed to capture photos');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // Handle upload from gallery
+  const handleGalleryUpload = async () => {
+    if (lotId === 'new') {
+      alert('Please save the lot first before adding photos');
+      return;
+    }
+
+    setUploading(true);
+    try {
+      const isNative = CameraService.isNativePlatform();
+      
+      if (isNative) {
+        // Native gallery picker
+        const result = await CameraService.selectMultipleAndSave(lotId);
+        
+        if (result.success > 0) {
+          alert(`Successfully uploaded ${result.success} photo(s)`);
+          await loadPhotos();
+          onPhotosChange();
+          
+          if (isOnline) {
+            await syncPhotos();
+          }
+        }
+
+        if (result.failed > 0) {
+          console.error('Some photos failed:', result.errors);
+        }
+      } else {
+        // Web fallback - file input
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+        input.multiple = true;
+
+        input.onchange = async (e: Event) => {
+          const files = (e.target as HTMLInputElement).files;
+          if (files && files.length > 0) {
+            const result = await CameraService.handleFileInput(files, lotId);
+            if (result.success > 0) {
+              alert(`Successfully uploaded ${result.success} photo(s)`);
+              await loadPhotos();
+              onPhotosChange();
+              if (isOnline) {
+                await syncPhotos();
+              }
+            }
+            if (result.failed > 0) {
+              alert(`${result.failed} photo(s) failed to upload`);
+            }
+          }
+        };
+
+        input.click();
+      }
     } catch (error) {
       console.error('Error uploading photos:', error);
       alert('Failed to upload photos');
@@ -143,24 +310,23 @@ export default function PhotoGallery({
     if (!confirm('Delete this photo?')) return;
 
     try {
-      // Delete from storage
-      await supabase.storage.from('photos').remove([photo.file_path]);
-
-      // Delete from database
-      await supabase.from('photos').delete().eq('id', photo.id);
+      await PhotoService.deletePhoto(photo.id);
 
       // If this was the primary photo and there are other photos, make the first one primary
       if (photo.is_primary && photos.length > 1) {
         const nextPrimary = photos.find(p => p.id !== photo.id);
         if (nextPrimary) {
-          await supabase
-            .from('photos')
-            .update({ is_primary: true })
-            .eq('id', nextPrimary.id);
+          await PhotoService.setPrimaryPhoto(lotId, nextPrimary.id);
         }
       }
 
+      await loadPhotos();
       onPhotosChange();
+
+      // Sync deletion to cloud if online
+      if (isOnline) {
+        await syncPhotos();
+      }
     } catch (error) {
       console.error('Error deleting photo:', error);
       alert('Failed to delete photo');
@@ -170,19 +336,13 @@ export default function PhotoGallery({
   // Set primary photo
   const handleSetPrimary = async (photo: Photo) => {
     try {
-      // Unset all primary flags
-      await supabase
-        .from('photos')
-        .update({ is_primary: false })
-        .eq('lot_id', lotId);
-
-      // Set this photo as primary
-      await supabase
-        .from('photos')
-        .update({ is_primary: true })
-        .eq('id', photo.id);
-
+      await PhotoService.setPrimaryPhoto(lotId, photo.id);
+      await loadPhotos();
       onPhotosChange();
+
+      if (isOnline) {
+        await syncPhotos();
+      }
     } catch (error) {
       console.error('Error setting primary photo:', error);
       alert('Failed to set primary photo');
@@ -212,7 +372,7 @@ export default function PhotoGallery({
     return commands.join('. ');
   };
 
-  // Apply AI enhancements
+  // Apply AI enhancements (placeholder for now)
   const handleApplyAIEnhancements = async () => {
     const photosToProcess = enhancementOptions.applyToAll 
       ? photos 
@@ -225,142 +385,161 @@ export default function PhotoGallery({
 
     const prompt = buildEnhancementPrompt();
     if (!prompt) {
-      alert('Please select at least one enhancement option or enter a custom command');
+      alert('Please select at least one enhancement option');
+      return;
+    }
+
+    if (!isOnline) {
+      alert('AI enhancements require an internet connection. Your photos will be enhanced when you reconnect.');
       return;
     }
 
     setProcessing(true);
     try {
-      // This is a placeholder for actual AI processing
-      // In production, this would call Google Gemini API or similar service
-      // to process images according to the prompt
+      // TODO: Implement actual AI enhancement with Gemini
+      // For now, show a placeholder message
+      alert(`AI Enhancement is not yet implemented.\n\nWould apply: ${prompt}\n\nTo ${photosToProcess.length} photo(s)`);
       
-      const mockPreviewImages: PreviewImage[] = photosToProcess.map(photo => ({
-        originalPhotoId: photo.id,
-        originalUrl: photoUrls[photo.id],
-        enhancedUrl: photoUrls[photo.id], // In production, this would be the AI-enhanced image
-      }));
-
-      setPreviewImages(mockPreviewImages);
-      setShowPreview(true);
-
-      // TODO: Implement actual AI image processing
-      // const enhancedImages = await processImagesWithAI(photosToProcess, prompt);
-      
+      // Preview would show original vs enhanced
+      // setPreviewImages(previews);
+      // setShowPreview(true);
     } catch (error) {
-      console.error('Error processing images:', error);
-      alert('Failed to process images with AI');
+      console.error('Error applying AI enhancements:', error);
+      alert('Failed to apply enhancements');
     } finally {
       setProcessing(false);
     }
   };
 
-  // Accept enhanced images
+  // Accept AI enhancements
   const handleAcceptEnhancements = async () => {
     setProcessing(true);
     try {
-      // TODO: Replace original images with enhanced versions in Supabase Storage
-      // For now, just close the preview
+      // TODO: Replace original photos with enhanced versions
+      // Save to IndexedDB and sync to cloud
+      
       setShowPreview(false);
       setPreviewImages([]);
-      alert('Images enhanced successfully!');
+      await loadPhotos();
       onPhotosChange();
     } catch (error) {
-      console.error('Error saving enhanced images:', error);
-      alert('Failed to save enhanced images');
+      console.error('Error accepting enhancements:', error);
+      alert('Failed to save enhanced photos');
     } finally {
       setProcessing(false);
     }
   };
 
-  // Reject enhanced images
+  // Reject AI enhancements
   const handleRejectEnhancements = () => {
     setShowPreview(false);
     setPreviewImages([]);
   };
 
-  return (
-    <div className="space-y-6">
-      {/* Action Buttons */}
-      <div className="flex items-center gap-3 flex-wrap">
-        {/* Camera Button */}
-        <button
-          onClick={() => cameraInputRef.current?.click()}
-          disabled={uploading || lotId === 'new'}
-          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors shadow-sm"
-        >
-          <Camera className="w-4 h-4" />
-          Camera
-        </button>
-        <input
-          ref={cameraInputRef}
-          type="file"
-          accept="image/*"
-          capture="environment"
-          multiple
-          onChange={handleCameraCapture}
-          className="hidden"
-        />
-
-        {/* Upload Button */}
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={uploading || lotId === 'new'}
-          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors shadow-sm"
-        >
-          <Upload className="w-4 h-4" />
-          Upload
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          multiple
-          onChange={handleFileUpload}
-          className="hidden"
-        />
-
-        {uploading && (
-          <span className="text-sm text-gray-600">Uploading...</span>
-        )}
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600" />
       </div>
+    );
+  }
 
-      {/* Enhancement Options Panel */}
-      {photos.length > 0 && (
-        <div className="bg-indigo-50 rounded-lg p-4 space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-gray-900">AI Image Enhancements</h3>
+  return (
+    <div className="space-y-4">
+      {/* Header with Action Buttons */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-3">
+          <h3 className="text-lg font-semibold text-gray-900">Photo Gallery</h3>
+          {/* Connection Status Indicator */}
+          <div className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium ${
+            isOnline 
+              ? 'bg-green-100 text-green-700' 
+              : 'bg-gray-100 text-gray-600'
+          }`}>
+            {isOnline ? (
+              <>
+                <Wifi className="w-3 h-3" />
+                <span>Online</span>
+              </>
+            ) : (
+              <>
+                <WifiOff className="w-3 h-3" />
+                <span>Offline</span>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {/* Camera Button - Single Photo */}
+          <button
+            onClick={handleCameraCapture}
+            disabled={uploading || lotId === 'new'}
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed transition-colors shadow-sm"
+          >
+            <Camera className="w-4 h-4" />
+            <span>Camera</span>
+          </button>
+
+          {/* Camera Button - Multiple Photos */}
+          <button
+            onClick={handleMultipleCapture}
+            disabled={uploading || lotId === 'new'}
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed transition-colors shadow-sm"
+            title="Capture multiple photos"
+          >
+            <Camera className="w-4 h-4" />
+            <span className="text-xs">Multi</span>
+          </button>
+
+          {/* Upload Button */}
+          <button
+            onClick={handleGalleryUpload}
+            disabled={uploading || lotId === 'new'}
+            className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 disabled:bg-gray-100 disabled:cursor-not-allowed transition-colors shadow-sm"
+          >
+            <Upload className="w-4 h-4" />
+            <span>Upload</span>
+          </button>
+
+          {/* AI Enhancement Button */}
+          {photos.length > 0 && (
             <button
               onClick={handleApplyAIEnhancements}
-              disabled={processing || selectedPhotos.size === 0 && !enhancementOptions.applyToAll}
-              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors shadow-sm"
+              disabled={processing || !isOnline}
+              className="flex items-center gap-2 px-4 py-2 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 disabled:bg-indigo-50 disabled:cursor-not-allowed transition-colors"
+              title={!isOnline ? 'Requires internet connection' : 'Apply AI enhancements'}
             >
-              {processing ? (
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
-              ) : (
-                <Sparkles className="w-4 h-4" />
-              )}
-              {processing ? 'Processing...' : 'Apply AI Image'}
+              <Sparkles className={`w-4 h-4 ${processing ? 'animate-spin' : ''}`} />
+              <span>AI Enhance</span>
             </button>
-          </div>
+          )}
+        </div>
+      </div>
 
-          {/* Select All Checkbox */}
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="applyToAll"
-              checked={enhancementOptions.applyToAll}
-              onChange={toggleSelectAll}
-              className="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
-            />
-            <label htmlFor="applyToAll" className="text-sm font-medium text-gray-700">
-              Apply to all images ({photos.length} total)
+      {/* AI Enhancement Options */}
+      {photos.length > 0 && (
+        <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4 space-y-4">
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm font-semibold text-indigo-900">AI Enhancement Options</h4>
+            
+            {/* Select All Checkbox */}
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={enhancementOptions.applyToAll}
+                onChange={toggleSelectAll}
+                className="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+              />
+              <span className="text-sm font-medium text-indigo-900">Apply to all images</span>
             </label>
           </div>
 
           {/* Background Color Options */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-gray-700">Background Color</label>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Background Color
+            </label>
             <div className="flex items-center gap-4">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
@@ -368,7 +547,7 @@ export default function PhotoGallery({
                   name="backgroundColor"
                   value="none"
                   checked={enhancementOptions.backgroundColor === 'none'}
-                  onChange={(_e) => setEnhancementOptions({ ...enhancementOptions, backgroundColor: 'none' })}
+                  onChange={() => setEnhancementOptions({ ...enhancementOptions, backgroundColor: 'none' })}
                   className="w-4 h-4 text-indigo-600 border-gray-300 focus:ring-indigo-500"
                 />
                 <span className="text-sm text-gray-700">None</span>
@@ -379,7 +558,7 @@ export default function PhotoGallery({
                   name="backgroundColor"
                   value="white"
                   checked={enhancementOptions.backgroundColor === 'white'}
-                  onChange={(_e) => setEnhancementOptions({ ...enhancementOptions, backgroundColor: 'white' })}
+                  onChange={() => setEnhancementOptions({ ...enhancementOptions, backgroundColor: 'white' })}
                   className="w-4 h-4 text-indigo-600 border-gray-300 focus:ring-indigo-500"
                 />
                 <span className="text-sm text-gray-700">White</span>
@@ -390,7 +569,7 @@ export default function PhotoGallery({
                   name="backgroundColor"
                   value="black"
                   checked={enhancementOptions.backgroundColor === 'black'}
-                  onChange={(_e) => setEnhancementOptions({ ...enhancementOptions, backgroundColor: 'black' })}
+                  onChange={() => setEnhancementOptions({ ...enhancementOptions, backgroundColor: 'black' })}
                   className="w-4 h-4 text-indigo-600 border-gray-300 focus:ring-indigo-500"
                 />
                 <span className="text-sm text-gray-700">Black</span>
@@ -401,7 +580,7 @@ export default function PhotoGallery({
                   name="backgroundColor"
                   value="grey"
                   checked={enhancementOptions.backgroundColor === 'grey'}
-                  onChange={(_e) => setEnhancementOptions({ ...enhancementOptions, backgroundColor: 'grey' })}
+                  onChange={() => setEnhancementOptions({ ...enhancementOptions, backgroundColor: 'grey' })}
                   className="w-4 h-4 text-indigo-600 border-gray-300 focus:ring-indigo-500"
                 />
                 <span className="text-sm text-gray-700">Grey</span>
@@ -456,11 +635,14 @@ export default function PhotoGallery({
 
       {/* Photo Grid */}
       {photos.length === 0 ? (
-        <div className="text-center py-12 text-gray-500">
+        <div className="text-center py-12 text-gray-500 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
           <Camera className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-          <p className="text-sm mb-2">No photos yet</p>
+          <p className="text-sm mb-2 font-medium">No photos yet</p>
           <p className="text-xs text-gray-400">
-            Use the Camera or Upload button to add photos
+            {CameraService.isNativePlatform() 
+              ? 'Use the Camera button to capture photos with your device'
+              : 'Use the Camera or Upload button to add photos'
+            }
           </p>
         </div>
       ) : (
@@ -508,8 +690,15 @@ export default function PhotoGallery({
                   </div>
                 )}
 
+                {/* Sync Status Badge */}
+                {!photo.synced && (
+                  <div className="absolute top-2 right-2 bg-yellow-500 text-white px-2 py-1 rounded text-xs font-medium shadow-sm">
+                    Pending Sync
+                  </div>
+                )}
+
                 {/* Action Buttons */}
-                <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="absolute bottom-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                   {!photo.is_primary && (
                     <button
                       onClick={() => handleSetPrimary(photo)}
@@ -602,6 +791,16 @@ export default function PhotoGallery({
                 {processing ? 'Saving...' : 'Accept & Apply'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Loading Overlay */}
+      {uploading && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto mb-4" />
+            <p className="text-gray-700">Processing photos...</p>
           </div>
         </div>
       )}

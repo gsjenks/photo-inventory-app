@@ -1,17 +1,41 @@
 // services/CameraService.ts
+// Native Camera Service with Capacitor for mobile devices
+// Supports zoom, brightness, focus, crop, and other native camera features
+
+import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
+import type { Photo as CapacitorPhoto } from '@capacitor/camera';
+import { Capacitor } from '@capacitor/core';
 import PhotoService from './PhotoService';
 
 interface CameraOptions {
   quality?: number;
-  maxWidth?: number;
-  maxHeight?: number;
+  allowEditing?: boolean;
+  resultType?: CameraResultType;
+  source?: CameraSource;
+  correctOrientation?: boolean;
+  width?: number;
+  height?: number;
 }
 
 class CameraService {
   /**
+   * Check if running on native platform (iOS/Android)
+   */
+  isNativePlatform(): boolean {
+    return Capacitor.isNativePlatform();
+  }
+
+  /**
    * Check if device has camera capabilities
    */
   async hasCamera(): Promise<boolean> {
+    if (this.isNativePlatform()) {
+      // On native platforms, assume camera is available
+      // Capacitor will handle permissions
+      return true;
+    }
+
+    // Web fallback
     if ('mediaDevices' in navigator && 'getUserMedia' in navigator.mediaDevices) {
       try {
         const devices = await navigator.mediaDevices.enumerateDevices();
@@ -24,207 +48,217 @@ class CameraService {
   }
 
   /**
-   * Capture photo using device camera (Web API)
+   * Capture photo using native camera with all device features
+   * On mobile: Uses native camera with zoom, focus, brightness, etc.
+   * On web: Falls back to HTML5 camera
    */
-  async capturePhoto(options: CameraOptions = {}): Promise<Blob | null> {
-    const { quality = 0.9, maxWidth = 1920, maxHeight = 1920 } = options;
+  async capturePhoto(options: CameraOptions = {}): Promise<CapacitorPhoto | null> {
+    const {
+      quality = 90,
+      allowEditing = true, // Enable native editing (crop, rotate, etc.)
+      resultType = CameraResultType.Uri,
+      correctOrientation = true,
+      width,
+      height,
+    } = options;
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: maxWidth }, height: { ideal: maxHeight } },
-        audio: false
+      // Use Capacitor Camera - provides native camera features on mobile
+      const photo = await Camera.getPhoto({
+        quality,
+        allowEditing, // Enables crop, rotate on iOS/Android
+        resultType,
+        source: CameraSource.Camera, // Open camera directly
+        correctOrientation, // Auto-correct orientation
+        width,
+        height,
+        // Native camera automatically provides:
+        // - Zoom controls
+        // - Focus tap-to-focus
+        // - Flash/lighting controls
+        // - HDR (if device supports)
+        // - Grid lines
+        // - Crop/rotate (if allowEditing=true)
       });
 
-      return new Promise((resolve, reject) => {
-        const video = document.createElement('video');
-        const canvas = document.createElement('canvas');
-        const overlay = this.createCameraOverlay(video, canvas, stream, quality, resolve, reject);
-        
-        document.body.appendChild(overlay);
-
-        video.srcObject = stream;
-        video.play();
-      });
-    } catch (error) {
-      console.error('Camera access error:', error);
-      alert('Unable to access camera. Please check permissions.');
+      return photo;
+    } catch (error: any) {
+      if (error.message !== 'User cancelled photos app') {
+        console.error('Camera capture error:', error);
+        alert('Unable to access camera. Please check permissions.');
+      }
       return null;
     }
   }
 
   /**
-   * Create camera overlay UI
+   * Capture multiple photos sequentially
    */
-  private createCameraOverlay(
-    video: HTMLVideoElement,
-    canvas: HTMLCanvasElement,
-    stream: MediaStream,
-    quality: number,
-    resolve: (blob: Blob | null) => void,
-    _reject: (error: any) => void
-  ): HTMLDivElement {
-    const overlay = document.createElement('div');
-    overlay.style.cssText = `
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: black;
-      z-index: 9999;
-      display: flex;
-      flex-direction: column;
-    `;
-
-    video.style.cssText = `
-      flex: 1;
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-    `;
-
-    const controls = document.createElement('div');
-    controls.style.cssText = `
-      display: flex;
-      justify-content: space-around;
-      align-items: center;
-      padding: 20px;
-      background: rgba(0, 0, 0, 0.8);
-      gap: 20px;
-    `;
-
-    const captureBtn = this.createButton('📷 Capture', '#4f46e5', () => {
-      this.captureFrame(video, canvas, quality, (blob) => {
-        this.cleanup(overlay, stream);
-        resolve(blob);
-      });
-    });
-
-    const cancelBtn = this.createButton('❌ Cancel', '#dc2626', () => {
-      this.cleanup(overlay, stream);
-      resolve(null);
-    });
-
-    controls.appendChild(cancelBtn);
-    controls.appendChild(captureBtn);
-    overlay.appendChild(video);
-    overlay.appendChild(controls);
-
-    return overlay;
-  }
-
-  /**
-   * Create button element
-   */
-  private createButton(text: string, bgColor: string, onClick: () => void): HTMLButtonElement {
-    const btn = document.createElement('button');
-    btn.textContent = text;
-    btn.style.cssText = `
-      flex: 1;
-      max-width: 200px;
-      padding: 16px 24px;
-      font-size: 18px;
-      font-weight: 600;
-      color: white;
-      background: ${bgColor};
-      border: none;
-      border-radius: 12px;
-      cursor: pointer;
-      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-    `;
-    btn.onclick = onClick;
-    return btn;
-  }
-
-  /**
-   * Capture frame from video and convert to blob
-   */
-  private captureFrame(
-    video: HTMLVideoElement,
-    canvas: HTMLCanvasElement,
-    quality: number,
-    callback: (blob: Blob | null) => void
-  ): void {
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+  async captureMultiplePhotos(count: number = 5): Promise<CapacitorPhoto[]> {
+    const photos: CapacitorPhoto[] = [];
     
-    const ctx = canvas.getContext('2d');
-    if (!ctx) {
-      callback(null);
-      return;
+    for (let i = 0; i < count; i++) {
+      const shouldContinue = confirm(
+        `Capture photo ${i + 1} of ${count}?\n(Cancel to finish early)`
+      );
+      
+      if (!shouldContinue) break;
+      
+      const photo = await this.capturePhoto();
+      if (photo) {
+        photos.push(photo);
+      } else {
+        break; // User cancelled
+      }
     }
-
-    ctx.drawImage(video, 0, 0);
     
-    canvas.toBlob(
-      (blob) => callback(blob),
-      'image/jpeg',
-      quality
-    );
+    return photos;
   }
 
   /**
-   * Cleanup camera resources
+   * Select photo(s) from gallery/photos app
+   * On mobile: Opens native photo picker with multi-select
+   * On web: Opens file picker
    */
-  private cleanup(overlay: HTMLDivElement, stream: MediaStream): void {
-    stream.getTracks().forEach(track => track.stop());
-    overlay.remove();
-  }
-
-  /**
-   * Handle file input selection (fallback for devices without camera)
-   */
-  async selectFromFiles(): Promise<Blob | null> {
-    return new Promise((resolve) => {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = 'image/*';
-      input.capture = 'environment' as any;
-
-      input.onchange = async (e: Event) => {
-        const file = (e.target as HTMLInputElement).files?.[0];
-        if (file) {
-          resolve(file);
-        } else {
-          resolve(null);
+  async selectFromGallery(multiple: boolean = false): Promise<CapacitorPhoto[]> {
+    try {
+      if (multiple && this.isNativePlatform()) {
+        // For multiple photos, we need to call the picker multiple times
+        // or use the Capacitor Community plugin
+        // For now, let user pick one at a time
+        const photos: CapacitorPhoto[] = [];
+        
+        while (true) {
+          const shouldContinue = photos.length === 0 || confirm(
+            `${photos.length} photo(s) selected. Add another?`
+          );
+          
+          if (!shouldContinue) break;
+          
+          const photo = await Camera.getPhoto({
+            quality: 90,
+            allowEditing: true,
+            resultType: CameraResultType.Uri,
+            source: CameraSource.Photos, // Open gallery
+            correctOrientation: true,
+          });
+          
+          if (photo) {
+            photos.push(photo);
+          } else {
+            break;
+          }
         }
-      };
-
-      input.oncancel = () => resolve(null);
-      input.click();
-    });
+        
+        return photos;
+      } else {
+        // Single photo
+        const photo = await Camera.getPhoto({
+          quality: 90,
+          allowEditing: true,
+          resultType: CameraResultType.Uri,
+          source: CameraSource.Photos,
+          correctOrientation: true,
+        });
+        
+        return photo ? [photo] : [];
+      }
+    } catch (error: any) {
+      if (error.message !== 'User cancelled photos app') {
+        console.error('Gallery selection error:', error);
+        alert('Unable to access photo gallery. Please check permissions.');
+      }
+      return [];
+    }
   }
 
   /**
-   * High-level method to capture and save photo
+   * Convert Capacitor Photo to Blob
+   */
+  async photoToBlob(photo: CapacitorPhoto): Promise<Blob> {
+    // If we have base64
+    if (photo.base64String) {
+      return this.base64ToBlob(photo.base64String, photo.format || 'jpeg');
+    }
+    
+    // If we have a web path (most common on mobile)
+    if (photo.webPath) {
+      const response = await fetch(photo.webPath);
+      return await response.blob();
+    }
+    
+    // If we have a path (file path on device)
+    if (photo.path) {
+      // For native file paths, we need to use Filesystem plugin
+      // For now, throw an error - this should be handled by webPath
+      throw new Error('Cannot convert file path to blob without Filesystem plugin');
+    }
+    
+    throw new Error('No valid photo data found');
+  }
+
+  /**
+   * Convert base64 to Blob
+   */
+  private base64ToBlob(base64: string, format: string): Blob {
+    const byteString = atob(base64);
+    const arrayBuffer = new ArrayBuffer(byteString.length);
+    const uint8Array = new Uint8Array(arrayBuffer);
+    
+    for (let i = 0; i < byteString.length; i++) {
+      uint8Array[i] = byteString.charCodeAt(i);
+    }
+    
+    return new Blob([arrayBuffer], { type: `image/${format}` });
+  }
+
+  /**
+   * High-level method to capture photo and save offline-first
    */
   async captureAndSave(
     lotId: string,
     isPrimary: boolean = false
   ): Promise<{ success: boolean; photoId?: string; error?: string }> {
     try {
-      // Check if camera is available
-      const hasCamera = await this.hasCamera();
-      
-      let blob: Blob | null;
-      
-      if (hasCamera) {
-        blob = await this.capturePhoto();
-      } else {
-        blob = await this.selectFromFiles();
-      }
+      const photo = await this.capturePhoto({
+        quality: 90,
+        allowEditing: true, // Enable crop/rotate
+      });
 
-      if (!blob) {
+      if (!photo) {
         return { success: false, error: 'No photo captured' };
       }
+
+      return await this.savePhoto(photo, lotId, isPrimary);
+    } catch (error) {
+      console.error('Error in captureAndSave:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to capture photo'
+      };
+    }
+  }
+
+  /**
+   * Save a Capacitor Photo to IndexedDB (offline-first)
+   */
+  async savePhoto(
+    photo: CapacitorPhoto,
+    lotId: string,
+    isPrimary: boolean = false
+  ): Promise<{ success: boolean; photoId?: string; error?: string }> {
+    try {
+      // Convert photo to blob
+      const blob = await this.photoToBlob(photo);
 
       // Generate photo ID and file path
       const photoId = crypto.randomUUID();
       const timestamp = Date.now();
-      const fileName = `${lotId}_${timestamp}.jpg`;
+      const format = photo.format || 'jpeg';
+      const fileName = `${lotId}_${timestamp}.${format}`;
       const filePath = `${lotId}/${fileName}`;
 
-      // Save photo using PhotoService
+      // Save photo using PhotoService (offline-first)
       const result = await PhotoService.savePhoto(
         photoId,
         lotId,
@@ -240,11 +274,177 @@ class CameraService {
         return { success: false, error: result.error };
       }
     } catch (error) {
-      console.error('Error in captureAndSave:', error);
+      console.error('Error saving photo:', error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to capture photo'
+        error: error instanceof Error ? error.message : 'Failed to save photo'
       };
+    }
+  }
+
+  /**
+   * Capture multiple photos and save them
+   */
+  async captureMultipleAndSave(
+    lotId: string,
+    count: number = 5
+  ): Promise<{ 
+    success: number; 
+    failed: number; 
+    photoIds: string[];
+    errors: string[];
+  }> {
+    const photoIds: string[] = [];
+    const errors: string[] = [];
+    let success = 0;
+    let failed = 0;
+
+    for (let i = 0; i < count; i++) {
+      const shouldContinue = i === 0 || confirm(
+        `${success} photo(s) saved. Capture another? (${i + 1} of ${count})`
+      );
+      
+      if (!shouldContinue) break;
+      
+      const photo = await this.capturePhoto({
+        quality: 90,
+        allowEditing: true,
+      });
+      
+      if (!photo) {
+        break; // User cancelled
+      }
+
+      const isPrimary = photoIds.length === 0; // First photo is primary
+      const result = await this.savePhoto(photo, lotId, isPrimary);
+      
+      if (result.success && result.photoId) {
+        success++;
+        photoIds.push(result.photoId);
+      } else {
+        failed++;
+        errors.push(result.error || 'Unknown error');
+      }
+    }
+
+    return { success, failed, photoIds, errors };
+  }
+
+  /**
+   * Select multiple photos from gallery and save them
+   */
+  async selectMultipleAndSave(
+    lotId: string
+  ): Promise<{ 
+    success: number; 
+    failed: number; 
+    photoIds: string[];
+    errors: string[];
+  }> {
+    const photos = await this.selectFromGallery(true);
+    
+    if (photos.length === 0) {
+      return { success: 0, failed: 0, photoIds: [], errors: [] };
+    }
+
+    const photoIds: string[] = [];
+    const errors: string[] = [];
+    let success = 0;
+    let failed = 0;
+
+    for (let i = 0; i < photos.length; i++) {
+      const isPrimary = i === 0; // First photo is primary
+      const result = await this.savePhoto(photos[i], lotId, isPrimary);
+      
+      if (result.success && result.photoId) {
+        success++;
+        photoIds.push(result.photoId);
+      } else {
+        failed++;
+        errors.push(result.error || 'Unknown error');
+      }
+    }
+
+    return { success, failed, photoIds, errors };
+  }
+
+  /**
+   * Web fallback: Handle file input selection
+   */
+  async handleFileInput(files: FileList | null, lotId: string): Promise<{
+    success: number;
+    failed: number;
+    photoIds: string[];
+    errors: string[];
+  }> {
+    if (!files || files.length === 0) {
+      return { success: 0, failed: 0, photoIds: [], errors: [] };
+    }
+
+    const photoIds: string[] = [];
+    const errors: string[] = [];
+    let success = 0;
+    let failed = 0;
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const isPrimary = i === 0;
+      
+      try {
+        const photoId = crypto.randomUUID();
+        const timestamp = Date.now();
+        const fileExt = file.name.split('.').pop() || 'jpg';
+        const fileName = `${lotId}_${timestamp}.${fileExt}`;
+        const filePath = `${lotId}/${fileName}`;
+
+        const result = await PhotoService.savePhoto(
+          photoId,
+          lotId,
+          file,
+          filePath,
+          fileName,
+          isPrimary
+        );
+
+        if (result.success) {
+          success++;
+          photoIds.push(photoId);
+        } else {
+          failed++;
+          errors.push(result.error || 'Unknown error');
+        }
+      } catch (error) {
+        failed++;
+        errors.push(error instanceof Error ? error.message : 'Unknown error');
+      }
+    }
+
+    return { success, failed, photoIds, errors };
+  }
+
+  /**
+   * Request camera permissions (useful for checking before opening camera)
+   */
+  async requestPermissions(): Promise<boolean> {
+    try {
+      const permissions = await Camera.requestPermissions();
+      return permissions.camera === 'granted';
+    } catch (error) {
+      console.error('Error requesting camera permissions:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Check camera permissions
+   */
+  async checkPermissions(): Promise<boolean> {
+    try {
+      const permissions = await Camera.checkPermissions();
+      return permissions.camera === 'granted' || permissions.camera === 'limited';
+    } catch (error) {
+      console.error('Error checking camera permissions:', error);
+      return false;
     }
   }
 }

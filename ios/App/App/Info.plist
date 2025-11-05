@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-        <string>CatalogPro</string>
+        <string>CatalogListPro</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -45,5 +45,13 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Take photos of auction items for your catalog.</string>
+
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Select photos from your library for auction items.</string>
+
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Save captured photos to your library.</string>
 </dict>
 </plist>

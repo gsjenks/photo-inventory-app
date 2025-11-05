@@ -1,25 +1,18 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.yourcompany.catalogpro',
-  appName: 'CatalogPro',
+  appId: 'com.app.CatalogListPro',
+  appName: 'CatalogListPro',
   webDir: 'dist',
-  bundledWebRuntime: false,
+  server: {
+    androidScheme: 'https',
+    // Uncomment below for local development testing
+    // url: 'http://192.168.1.100:5173',
+    // cleartext: true
+  },
   plugins: {
-    SplashScreen: {
-      launchShowDuration: 2000,
-      backgroundColor: '#4f46e5',
-      showSpinner: false,
-      androidSpinnerStyle: 'small',
-      iosSpinnerStyle: 'small',
-      splashFullScreen: true,
-      splashImmersive: true,
-    },
     Camera: {
-      // Camera permissions will be requested when needed
-    },
-    Filesystem: {
-      // Filesystem permissions
+      // Camera plugin is ready to use
     },
   },
 };

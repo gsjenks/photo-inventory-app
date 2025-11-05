@@ -31,7 +31,7 @@ export interface Sale {
 export interface Lot {
   id: string;
   sale_id: string;
-  lot_number?: number | string;  // ← FIXED: Now accepts both number AND string
+  lot_number?: number | string;
   name: string;
   description?: string;
   quantity?: number;
@@ -71,6 +71,7 @@ export interface Photo {
   ai_objects?: string[];
   ai_enriched?: boolean;
   ai_enriched_at?: string;
+  synced?: boolean;  // ← ADDED: Track sync status for offline-first
 }
 
 export interface Contact {
