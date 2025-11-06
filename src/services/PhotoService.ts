@@ -129,7 +129,7 @@ class PhotoService {
 
         // If online, sync to Supabase in background
         if (ConnectivityService.getConnectionStatus()) {
-          this.syncPhotoToSupabase(item.photoId, blob, item.filePath, metadata).catch(err => {
+          this.syncPhotoToSupabase(blob, item.filePath, metadata).catch(err => {
             console.log('Background sync will retry later:', err.message);
           });
         }
@@ -180,7 +180,6 @@ class PhotoService {
    * Background sync single photo to Supabase
    */
   private async syncPhotoToSupabase(
-    photoId: string,
     blob: Blob,
     filePath: string,
     metadata: PhotoMetadata
