@@ -22,6 +22,10 @@ interface PhotoInventoryDB extends DBSchema {
     value: any;
     indexes: { 'by-lot': string };
   };
+  photoBlobs: {
+    key: string;
+    value: { id: string; blob: Blob };
+  };
   pendingSync: {
     key: string;
     value: {
@@ -54,7 +58,7 @@ interface PhotoInventoryDB extends DBSchema {
 class OfflineStorage {
   private db: IDBPDatabase<PhotoInventoryDB> | null = null;
   private readonly DB_NAME = 'PhotoInventoryDB';
-  private readonly DB_VERSION = 2;
+  private readonly DB_VERSION = 3; // Increment version for photoBlobs store
 
   async initialize(): Promise<void> {
     this.db = await openDB<PhotoInventoryDB>(this.DB_NAME, this.DB_VERSION, {
@@ -83,6 +87,11 @@ class OfflineStorage {
         if (!db.objectStoreNames.contains('photos')) {
           const photosStore = db.createObjectStore('photos', { keyPath: 'id' });
           photosStore.createIndex('by-lot', 'lot_id');
+        }
+
+        // Photo blobs store (new in version 3)
+        if (!db.objectStoreNames.contains('photoBlobs')) {
+          db.createObjectStore('photoBlobs', { keyPath: 'id' });
         }
 
         // Pending sync operations
@@ -150,6 +159,69 @@ class OfflineStorage {
   async getLotsBySale(saleId: string): Promise<any[]> {
     if (!this.db) await this.initialize();
     return await this.db!.getAllFromIndex('lots', 'by-sale', saleId);
+  }
+
+  // Photos
+  async savePhoto(photo: any, blob?: Blob): Promise<void> {
+    if (!this.db) await this.initialize();
+    
+    // Save photo metadata
+    await this.db!.put('photos', photo);
+    
+    // Save photo blob if provided
+    if (blob) {
+      await this.db!.put('photoBlobs', { id: photo.id, blob });
+    }
+  }
+
+  async getPhotosByLot(lotId: string): Promise<any[]> {
+    if (!this.db) await this.initialize();
+    return await this.db!.getAllFromIndex('photos', 'by-lot', lotId);
+  }
+
+  async getPhoto(photoId: string): Promise<any> {
+    if (!this.db) await this.initialize();
+    return await this.db!.get('photos', photoId);
+  }
+
+  async getPhotoBlob(photoId: string): Promise<Blob | undefined> {
+    if (!this.db) await this.initialize();
+    const record = await this.db!.get('photoBlobs', photoId);
+    return record?.blob;
+  }
+
+  async deletePhoto(photoId: string): Promise<void> {
+    if (!this.db) await this.initialize();
+    const tx = this.db!.transaction(['photos', 'photoBlobs'], 'readwrite');
+    await tx.objectStore('photos').delete(photoId);
+    await tx.objectStore('photoBlobs').delete(photoId);
+    await tx.done;
+  }
+
+  async updatePhoto(photo: any): Promise<void> {
+    if (!this.db) await this.initialize();
+    await this.db!.put('photos', photo);
+  }
+
+  async upsertPhoto(photo: any): Promise<void> {
+    if (!this.db) await this.initialize();
+    await this.db!.put('photos', photo);
+  }
+
+  async upsertPhotoBlob(photoId: string, blob: Blob): Promise<void> {
+    if (!this.db) await this.initialize();
+    await this.db!.put('photoBlobs', { id: photoId, blob });
+  }
+
+  async deletePhotoBlob(photoId: string): Promise<void> {
+    if (!this.db) await this.initialize();
+    await this.db!.delete('photoBlobs', photoId);
+  }
+
+  async getUnsyncedPhotos(): Promise<any[]> {
+    if (!this.db) await this.initialize();
+    const allPhotos = await this.db!.getAll('photos');
+    return allPhotos.filter(photo => !photo.synced);
   }
 
   // Generic upsert for any table
@@ -243,7 +315,7 @@ class OfflineStorage {
   async clearAll(): Promise<void> {
     if (!this.db) await this.initialize();
     
-    const stores = ['companies', 'sales', 'lots', 'photos', 'pendingSync', 'conflicts', 'metadata'];
+    const stores = ['companies', 'sales', 'lots', 'photos', 'photoBlobs', 'pendingSync', 'conflicts', 'metadata'];
     const tx = this.db!.transaction(stores as any, 'readwrite');
     
     for (const store of stores) {

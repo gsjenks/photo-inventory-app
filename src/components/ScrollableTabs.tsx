@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, Search, Filter, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Search, Filter, X, ArrowUpDown } from 'lucide-react';
 
 interface Tab {
   id: string;
@@ -14,11 +14,19 @@ interface FilterOption {
   value: string;
 }
 
+interface SortOption {
+  id: string;
+  label: string;
+  value: string;
+}
+
 interface TabFilters {
   searchPlaceholder?: string;
   filterOptions?: FilterOption[];
+  sortOptions?: SortOption[];
   showSearch?: boolean;
   showFilter?: boolean;
+  showSort?: boolean;
 }
 
 interface ScrollableTabsProps {
@@ -28,6 +36,7 @@ interface ScrollableTabsProps {
   tabFilters?: Record<string, TabFilters>;
   onSearch?: (tabId: string, searchQuery: string) => void;
   onFilterChange?: (tabId: string, filterId: string) => void;
+  onSortChange?: (tabId: string, sortId: string) => void;
 }
 
 export default function ScrollableTabs({ 
@@ -36,19 +45,23 @@ export default function ScrollableTabs({
   onTabChange,
   tabFilters = {},
   onSearch,
-  onFilterChange
+  onFilterChange,
+  onSortChange
 }: ScrollableTabsProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [showLeftArrow, setShowLeftArrow] = useState(false);
   const [showRightArrow, setShowRightArrow] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedFilter, setSelectedFilter] = useState<string>('');
+  const [selectedSort, setSelectedSort] = useState<string>('');
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
+  const [showSortDropdown, setShowSortDropdown] = useState(false);
 
   const currentTabFilters = tabFilters[activeTab] || {
     searchPlaceholder: 'Search...',
     showSearch: true,
     showFilter: false,
+    showSort: false,
   };
 
   const checkScrollPosition = () => {
@@ -75,11 +88,13 @@ export default function ScrollableTabs({
     }
   }, [tabs]);
 
-  // Reset search and filter when tab changes
+  // Reset search, filter, and sort when tab changes
   useEffect(() => {
     setSearchQuery('');
     setSelectedFilter('');
+    setSelectedSort('');
     setShowFilterDropdown(false);
+    setShowSortDropdown(false);
   }, [activeTab]);
 
   const scroll = (direction: 'left' | 'right') => {
@@ -112,6 +127,14 @@ export default function ScrollableTabs({
     }
   };
 
+  const handleSortSelect = (sortId: string) => {
+    setSelectedSort(sortId);
+    setShowSortDropdown(false);
+    if (onSortChange) {
+      onSortChange(activeTab, sortId);
+    }
+  };
+
   const clearSearch = () => {
     setSearchQuery('');
     if (onSearch) {
@@ -126,8 +149,16 @@ export default function ScrollableTabs({
     }
   };
 
+  const clearSort = () => {
+    setSelectedSort('');
+    if (onSortChange) {
+      onSortChange(activeTab, '');
+    }
+  };
+
   const showSearchBar = currentTabFilters.showSearch !== false;
   const showFilterButton = currentTabFilters.showFilter && currentTabFilters.filterOptions && currentTabFilters.filterOptions.length > 0;
+  const showSortButton = currentTabFilters.showSort && currentTabFilters.sortOptions && currentTabFilters.sortOptions.length > 0;
 
   return (
     <div className="border-b border-gray-200">
@@ -206,8 +237,8 @@ export default function ScrollableTabs({
         )}
       </div>
 
-      {/* Dynamic Search and Filter Bar */}
-      {(showSearchBar || showFilterButton) && (
+      {/* Dynamic Search, Filter, and Sort Bar */}
+      {(showSearchBar || showFilterButton || showSortButton) && (
         <div className="px-4 py-3 bg-gray-50 border-t border-gray-200">
           <div className="flex items-center gap-3">
             {/* Search Input */}
@@ -229,6 +260,71 @@ export default function ScrollableTabs({
                   >
                     <X className="w-4 h-4" />
                   </button>
+                )}
+              </div>
+            )}
+
+            {/* Sort Dropdown */}
+            {showSortButton && (
+              <div className="relative">
+                <button
+                  onClick={() => setShowSortDropdown(!showSortDropdown)}
+                  className={`
+                    flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border transition-colors
+                    ${selectedSort
+                      ? 'bg-indigo-50 border-indigo-300 text-indigo-700'
+                      : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
+                    }
+                  `}
+                >
+                  <ArrowUpDown className="w-4 h-4" />
+                  <span>
+                    {selectedSort 
+                      ? currentTabFilters.sortOptions?.find(s => s.id === selectedSort)?.label 
+                      : 'Sort'}
+                  </span>
+                  {selectedSort && (
+                    <span
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        clearSort();
+                      }}
+                      className="ml-1 hover:bg-indigo-100 rounded-full p-0.5 cursor-pointer inline-flex"
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.stopPropagation();
+                          clearSort();
+                        }
+                      }}
+                    >
+                      <X className="w-3 h-3" />
+                    </span>
+                  )}
+                </button>
+
+                {/* Sort Dropdown Menu */}
+                {showSortDropdown && (
+                  <div className="absolute right-0 mt-2 w-56 bg-white rounded-lg shadow-lg border border-gray-200 z-20">
+                    <div className="py-1">
+                      {currentTabFilters.sortOptions?.map((option) => (
+                        <button
+                          key={option.id}
+                          onClick={() => handleSortSelect(option.id)}
+                          className={`
+                            w-full text-left px-4 py-2 text-sm transition-colors
+                            ${selectedSort === option.id
+                              ? 'bg-indigo-50 text-indigo-700'
+                              : 'text-gray-700 hover:bg-gray-50'
+                            }
+                          `}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 )}
               </div>
             )}

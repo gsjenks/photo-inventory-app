@@ -36,6 +36,14 @@ export default function SaleDetail() {
     reports: ''
   });
 
+  // Sort state - track active sort for each tab (default: lot-desc = last lot first)
+  const [activeSorts, setActiveSorts] = useState<Record<string, string>>({
+    items: 'lot-desc',
+    contacts: '',
+    documents: '',
+    reports: ''
+  });
+
   useEffect(() => {
     loadSale();
     loadLots();
@@ -205,6 +213,14 @@ export default function SaleDetail() {
     }));
   };
 
+  // Sort handler - updates active sort for specific tab
+  const handleSortChange = (tabId: string, sortId: string) => {
+    setActiveSorts(prev => ({
+      ...prev,
+      [tabId]: sortId
+    }));
+  };
+
   // COMPREHENSIVE LOTS FILTER - Searches ALL 20+ metadata fields
   const getFilteredLots = () => {
     let filtered = [...lots];
@@ -266,47 +282,62 @@ export default function SaleDetail() {
       filtered = filtered.filter(lot => lot.category?.toLowerCase() === filter.toLowerCase());
     }
     
+    // Apply sort
+    const sort = activeSorts.items || 'lot-desc';
+    filtered.sort((a, b) => {
+      switch (sort) {
+        case 'lot-asc':
+          // Sort by lot number ascending (first lot first)
+          return (Number(a.lot_number) || 0) - (Number(b.lot_number) || 0);
+        case 'lot-desc':
+          // Sort by lot number descending (last lot first) - DEFAULT
+          return (Number(b.lot_number) || 0) - (Number(a.lot_number) || 0);
+        case 'name-asc':
+          // Sort by name A-Z
+          return (a.name || '').localeCompare(b.name || '');
+        case 'name-desc':
+          // Sort by name Z-A
+          return (b.name || '').localeCompare(a.name || '');
+        case 'price-asc':
+          // Sort by estimate low price ascending
+          return (a.estimate_low || 0) - (b.estimate_low || 0);
+        case 'price-desc':
+          // Sort by estimate low price descending
+          return (b.estimate_low || 0) - (a.estimate_low || 0);
+        default:
+          return 0;
+      }
+    });
+    
     return filtered;
   };
 
-  // COMPREHENSIVE CONTACTS FILTER - Searches ALL 14 metadata fields
   const getFilteredContacts = () => {
     let filtered = [...contacts];
     const query = searchQueries.contacts?.toLowerCase().trim();
     
     // Apply search filter
     if (query) {
-      filtered = filtered.filter(contact => {
-        return (
-          // Name Parts
-          contact.prefix?.toLowerCase().includes(query) ||
-          contact.first_name?.toLowerCase().includes(query) ||
-          contact.middle_name?.toLowerCase().includes(query) ||
-          contact.last_name?.toLowerCase().includes(query) ||
-          contact.suffix?.toLowerCase().includes(query) ||
-          
-          // Business
-          contact.business_name?.toLowerCase().includes(query) ||
-          contact.role?.toLowerCase().includes(query) ||
-          (contact as any).contact_type?.toLowerCase().includes(query) ||
-          
-          // Contact Info
-          contact.email?.toLowerCase().includes(query) ||
-          contact.phone?.toLowerCase().includes(query) ||
-          
-          // Address
-          contact.address?.toLowerCase().includes(query) ||
-          contact.city?.toLowerCase().includes(query) ||
-          contact.state?.toLowerCase().includes(query) ||
-          contact.zip_code?.toLowerCase().includes(query) ||
-          
-          // Other
-          contact.notes?.toLowerCase().includes(query)
-        );
-      });
+      filtered = filtered.filter(contact =>
+        contact.prefix?.toLowerCase().includes(query) ||
+        contact.first_name?.toLowerCase().includes(query) ||
+        contact.middle_name?.toLowerCase().includes(query) ||
+        contact.last_name?.toLowerCase().includes(query) ||
+        contact.suffix?.toLowerCase().includes(query) ||
+        contact.business_name?.toLowerCase().includes(query) ||
+        contact.role?.toLowerCase().includes(query) ||
+        (contact as any).contact_type?.toLowerCase().includes(query) ||
+        contact.email?.toLowerCase().includes(query) ||
+        contact.phone?.toLowerCase().includes(query) ||
+        contact.address?.toLowerCase().includes(query) ||
+        contact.city?.toLowerCase().includes(query) ||
+        contact.state?.toLowerCase().includes(query) ||
+        contact.zip_code?.toLowerCase().includes(query) ||
+        contact.notes?.toLowerCase().includes(query)
+      );
     }
     
-    // Apply contact type filter
+    // Apply filter by contact_type
     const filter = activeFilters.contacts;
     if (filter) {
       filtered = filtered.filter(contact => (contact as any).contact_type?.toLowerCase() === filter.toLowerCase());
@@ -315,22 +346,19 @@ export default function SaleDetail() {
     return filtered;
   };
 
-  // COMPREHENSIVE DOCUMENTS FILTER
   const getFilteredDocuments = () => {
     let filtered = [...documents];
     const query = searchQueries.documents?.toLowerCase().trim();
     
     // Apply search filter
     if (query) {
-      filtered = filtered.filter(doc => {
-        return (
-          doc.name?.toLowerCase().includes(query) ||
-          doc.file_name?.toLowerCase().includes(query) ||
-          doc.description?.toLowerCase().includes(query) ||
-          doc.document_type?.toLowerCase().includes(query) ||
-          doc.file_type?.toLowerCase().includes(query)
-        );
-      });
+      filtered = filtered.filter(doc =>
+        doc.name?.toLowerCase().includes(query) ||
+        doc.file_name?.toLowerCase().includes(query) ||
+        doc.description?.toLowerCase().includes(query) ||
+        doc.document_type?.toLowerCase().includes(query) ||
+        doc.file_type?.toLowerCase().includes(query)
+      );
     }
     
     // Apply document type filter
@@ -380,6 +408,15 @@ export default function SaleDetail() {
       searchPlaceholder: 'Search items by name, category, price, lot #, dimensions...',
       showSearch: true,
       showFilter: true,
+      showSort: true,
+      sortOptions: [
+        { id: 'lot-desc', label: 'Lot # (Last First)', value: 'lot-desc' },
+        { id: 'lot-asc', label: 'Lot # (First First)', value: 'lot-asc' },
+        { id: 'name-asc', label: 'Name (A-Z)', value: 'name-asc' },
+        { id: 'name-desc', label: 'Name (Z-A)', value: 'name-desc' },
+        { id: 'price-asc', label: 'Price (Low to High)', value: 'price-asc' },
+        { id: 'price-desc', label: 'Price (High to Low)', value: 'price-desc' },
+      ],
       filterOptions: [
         { id: 'furniture', label: 'Furniture', value: 'furniture' },
         { id: 'art', label: 'Art', value: 'art' },
@@ -480,7 +517,7 @@ export default function SaleDetail() {
         </div>
       </div>
 
-      {/* Scrollable Tabs with Search */}
+      {/* Scrollable Tabs with Search, Filter, and Sort */}
       <ScrollableTabs
         tabs={tabs}
         activeTab={activeTab}
@@ -488,6 +525,7 @@ export default function SaleDetail() {
         tabFilters={tabFilters}
         onSearch={handleSearch}
         onFilterChange={handleFilterChange}
+        onSortChange={handleSortChange}
       />
 
       {/* Tab Content */}
