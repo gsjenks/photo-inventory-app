@@ -5,7 +5,254 @@ import * as LotNumberService from './LotNumberService';
 
 class SyncService {
   private isSyncing = false;
+  private syncProgress = {
+    stage: '',
+    current: 0,
+    total: 0,
+  };
+  private progressListeners: Set<(progress: typeof this.syncProgress) => void> = new Set();
 
+  /**
+   * Subscribe to sync progress updates
+   */
+  onProgressChange(callback: (progress: typeof this.syncProgress) => void): () => void {
+    this.progressListeners.add(callback);
+    return () => {
+      this.progressListeners.delete(callback);
+    };
+  }
+
+  private notifyProgress(stage: string, current: number, total: number): void {
+    this.syncProgress = { stage, current, total };
+    this.progressListeners.forEach(listener => {
+      try {
+        listener(this.syncProgress);
+      } catch (error) {
+        console.error('Error in progress listener:', error);
+      }
+    });
+  }
+
+  /**
+   * Initial sync when app opens - syncs active sales only
+   */
+  async performInitialSync(companyId: string): Promise<void> {
+    if (this.isSyncing) {
+      console.log('Sync already in progress');
+      return;
+    }
+
+    this.isSyncing = true;
+    
+    try {
+      console.log('🔄 Starting initial sync for active sales...');
+      this.notifyProgress('Initializing', 0, 5);
+
+      // Step 1: Pull company data
+      this.notifyProgress('Syncing company data', 1, 5);
+      await this.syncCompanyData(companyId);
+
+      // Step 2: Pull active sales only
+      this.notifyProgress('Syncing active sales', 2, 5);
+      const activeSales = await this.syncActiveSales(companyId);
+
+      // Step 3: Pull lots for active sales
+      this.notifyProgress('Syncing items', 3, 5);
+      await this.syncLotsForActiveSales(activeSales);
+
+      // Step 4: Pull photo metadata for active sales
+      this.notifyProgress('Syncing photo data', 4, 5);
+      await this.syncPhotosForActiveSales(activeSales);
+
+      // Step 5: Download photo blobs for active sales (in background)
+      this.notifyProgress('Downloading photos', 5, 5);
+      this.downloadPhotoBlobsInBackground(activeSales);
+
+      // Push any pending local changes
+      await this.pushLocalChanges();
+
+      await offlineStorage.setLastSyncTime(Date.now());
+      console.log('✅ Initial sync completed successfully');
+      this.notifyProgress('Complete', 5, 5);
+    } catch (error) {
+      console.error('❌ Initial sync failed:', error);
+      this.notifyProgress('Error', 0, 0);
+      throw error;
+    } finally {
+      this.isSyncing = false;
+    }
+  }
+
+  /**
+   * Sync company data
+   */
+  private async syncCompanyData(companyId: string): Promise<void> {
+    const { data, error } = await supabase
+      .from('companies')
+      .select('*')
+      .eq('id', companyId)
+      .single();
+
+    if (error) throw error;
+    if (data) {
+      await offlineStorage.upsertCompany(data);
+    }
+  }
+
+  /**
+   * Sync only active and upcoming sales (not completed/archived)
+   */
+  private async syncActiveSales(companyId: string): Promise<any[]> {
+    const { data, error } = await supabase
+      .from('sales')
+      .select('*')
+      .eq('company_id', companyId)
+      .in('status', ['upcoming', 'active'])
+      .order('start_date', { ascending: false });
+
+    if (error) throw error;
+
+    if (data && data.length > 0) {
+      console.log(`📦 Found ${data.length} active sales`);
+      for (const sale of data) {
+        await offlineStorage.upsertSale(sale);
+      }
+    }
+
+    return data || [];
+  }
+
+  /**
+   * Sync lots for active sales only
+   */
+  private async syncLotsForActiveSales(activeSales: any[]): Promise<void> {
+    if (activeSales.length === 0) return;
+
+    const saleIds = activeSales.map(s => s.id);
+    
+    const { data, error } = await supabase
+      .from('lots')
+      .select('*')
+      .in('sale_id', saleIds);
+
+    if (error) throw error;
+
+    if (data && data.length > 0) {
+      console.log(`📋 Found ${data.length} items for active sales`);
+      for (const lot of data) {
+        await offlineStorage.upsertLot(lot);
+      }
+    }
+  }
+
+  /**
+   * Sync photo metadata for active sales
+   */
+  private async syncPhotosForActiveSales(activeSales: any[]): Promise<void> {
+    if (activeSales.length === 0) return;
+
+    // Get all lot IDs for active sales
+    const saleIds = activeSales.map(s => s.id);
+    
+    const { data: lots, error: lotsError } = await supabase
+      .from('lots')
+      .select('id')
+      .in('sale_id', saleIds);
+
+    if (lotsError) throw lotsError;
+    if (!lots || lots.length === 0) return;
+
+    const lotIds = lots.map(l => l.id);
+
+    // Get photo metadata
+    const { data: photos, error: photosError } = await supabase
+      .from('photos')
+      .select('*')
+      .in('lot_id', lotIds);
+
+    if (photosError) throw photosError;
+
+    if (photos && photos.length > 0) {
+      console.log(`🖼️  Found ${photos.length} photos for active sales`);
+      for (const photo of photos) {
+        await offlineStorage.upsertPhoto({ ...photo, synced: true });
+      }
+    }
+  }
+
+  /**
+   * Download photo blobs in background (non-blocking)
+   */
+  private async downloadPhotoBlobsInBackground(activeSales: any[]): Promise<void> {
+    // Don't await this - let it run in background
+    setTimeout(async () => {
+      try {
+        if (activeSales.length === 0) return;
+
+        const saleIds = activeSales.map(s => s.id);
+        
+        const { data: lots } = await supabase
+          .from('lots')
+          .select('id')
+          .in('sale_id', saleIds);
+
+        if (!lots) return;
+
+        for (const lot of lots) {
+          try {
+            const result = await PhotoService.downloadPhotosForLot(lot.id);
+            if (result.success > 0) {
+              console.log(`✅ Downloaded ${result.success} photos for lot ${lot.id}`);
+            }
+          } catch (error) {
+            console.debug('Photo download failed for lot', lot.id, ':', error);
+          }
+        }
+
+        console.log('🖼️  Background photo download complete');
+      } catch (error) {
+        console.debug('Background photo download error:', error);
+      }
+    }, 1000); // Start after 1 second delay
+  }
+
+  /**
+   * Full sync - all data including completed sales
+   */
+  async performFullSync(companyId: string): Promise<void> {
+    if (this.isSyncing) {
+      console.log('Sync already in progress');
+      return;
+    }
+
+    this.isSyncing = true;
+
+    try {
+      console.log('🔄 Starting full sync...');
+      this.notifyProgress('Full sync in progress', 0, 4);
+
+      // Clear local storage
+      await offlineStorage.clearAll();
+
+      // Pull all data from cloud
+      await this.pullAllData(companyId);
+
+      // Replace any temporary lot numbers
+      await this.replaceTempLotNumbers();
+
+      console.log('✅ Full sync completed successfully');
+      this.notifyProgress('Complete', 4, 4);
+    } catch (error) {
+      console.error('❌ Full sync failed:', error);
+      throw error;
+    } finally {
+      this.isSyncing = false;
+    }
+  }
+
+  /**
+   * Standard sync - push local changes, pull remote updates
+   */
   async performSync(): Promise<void> {
     if (this.isSyncing) {
       console.log('Sync already in progress');
@@ -67,7 +314,6 @@ class SyncService {
     // Handle photo-specific operations
     if (table === 'photos') {
       if (data.operation === 'set_primary') {
-        // Handle set primary photo operation
         await supabase
           .from('photos')
           .update({ is_primary: false })
@@ -82,18 +328,14 @@ class SyncService {
       }
 
       if (type === 'delete') {
-        // Delete photo from storage
         if (data.file_path) {
           await supabase.storage.from('photos').remove([data.file_path]);
         }
-        // Delete record
         await supabase.from('photos').delete().eq('id', data.id);
         return;
       }
 
       if (type === 'create') {
-        // Photo creation is handled in syncPhotos() method
-        // This entry just marks that a photo needs to be uploaded
         return;
       }
     }
@@ -119,7 +361,6 @@ class SyncService {
     console.log('Syncing photos...');
 
     try {
-      // Get all unsynced photos from IndexedDB
       const unsyncedPhotos = await offlineStorage.getUnsyncedPhotos();
       
       if (unsyncedPhotos.length === 0) {
@@ -131,7 +372,6 @@ class SyncService {
 
       for (const photo of unsyncedPhotos) {
         try {
-          // Get the photo blob
           const blob = await offlineStorage.getPhotoBlob(photo.id);
           
           if (!blob) {
@@ -139,7 +379,6 @@ class SyncService {
             continue;
           }
 
-          // Upload to Supabase Storage
           const uploadResult = await PhotoService.uploadToSupabase(blob, photo.file_path);
           
           if (!uploadResult.success) {
@@ -147,7 +386,6 @@ class SyncService {
             continue;
           }
 
-          // Save metadata to Supabase database
           const metadataSaved = await PhotoService.saveMetadataToSupabase({
             id: photo.id,
             lot_id: photo.lot_id,
@@ -165,14 +403,12 @@ class SyncService {
           }
         } catch (error) {
           console.error(`Error syncing photo ${photo.id}:`, error);
-          // Continue with other photos
         }
       }
 
       console.log('Photo sync completed');
     } catch (error) {
       console.error('Error in photo sync:', error);
-      // Don't throw - continue with other sync operations
     }
   }
 
@@ -180,7 +416,6 @@ class SyncService {
     console.log('Replacing temporary lot numbers...');
 
     try {
-      // Get all sales that have lots with temporary numbers
       const { data: sales, error } = await supabase
         .from('sales')
         .select('id');
@@ -192,7 +427,6 @@ class SyncService {
         return;
       }
 
-      // Replace temporary lot numbers for each sale
       for (const sale of sales) {
         await LotNumberService.reassignTemporaryNumbers(sale.id);
       }
@@ -200,7 +434,6 @@ class SyncService {
       console.log('Temporary lot numbers replaced successfully');
     } catch (error) {
       console.error('Error replacing temporary lot numbers:', error);
-      // Don't throw - continue with sync even if this fails
     }
   }
 
@@ -209,7 +442,6 @@ class SyncService {
     
     const lastSyncTime = await offlineStorage.getLastSyncTime();
     
-    // Fetch companies updated since last sync
     const { data: companies, error: companiesError } = await supabase
       .from('companies')
       .select('*')
@@ -217,7 +449,6 @@ class SyncService {
 
     if (companiesError) throw companiesError;
 
-    // Store companies locally
     if (companies && companies.length > 0) {
       console.log(`Pulled ${companies.length} updated companies`);
       for (const company of companies) {
@@ -225,7 +456,6 @@ class SyncService {
       }
     }
 
-    // Fetch sales updated since last sync
     const { data: sales, error: salesError } = await supabase
       .from('sales')
       .select('*')
@@ -240,7 +470,6 @@ class SyncService {
       }
     }
 
-    // Fetch lots updated since last sync
     const { data: lots, error: lotsError } = await supabase
       .from('lots')
       .select('*')
@@ -255,7 +484,6 @@ class SyncService {
       }
     }
 
-    // Fetch photos updated since last sync
     const { data: photos, error: photosError } = await supabase
       .from('photos')
       .select('*')
@@ -268,8 +496,6 @@ class SyncService {
       for (const photo of photos) {
         await offlineStorage.upsertPhoto({ ...photo, synced: true });
         
-        // Optionally download photo blobs for offline viewing
-        // This can be done in the background or on-demand
         try {
           const { data: blob, error: downloadError } = await supabase.storage
             .from('photos')
@@ -279,71 +505,35 @@ class SyncService {
             await offlineStorage.upsertPhotoBlob(photo.id, blob);
           }
         } catch (downloadError) {
-          // Don't fail sync if photo download fails
           console.debug(`Failed to download photo ${photo.id}:`, downloadError);
         }
       }
     }
 
-    // Update last sync time
     await offlineStorage.setLastSyncTime(Date.now());
     console.log('Remote changes pulled successfully');
   }
 
-
-  /**
-   * Full sync - clear local data and pull everything from cloud
-   * Use this when you want to completely reset to cloud state
-   */
-  async performFullSync(): Promise<void> {
-    if (this.isSyncing) {
-      console.log('Sync already in progress');
-      return;
-    }
-
-    this.isSyncing = true;
-
-    try {
-      console.log('Starting full sync...');
-
-      // Clear local storage
-      await offlineStorage.clearAll();
-
-      // Pull all data from cloud
-      await this.pullAllData();
-
-      // Replace any temporary lot numbers
-      await this.replaceTempLotNumbers();
-
-      console.log('Full sync completed successfully');
-    } catch (error) {
-      console.error('Full sync failed:', error);
-      throw error;
-    } finally {
-      this.isSyncing = false;
-    }
-  }
-
-  private async pullAllData(): Promise<void> {
+  private async pullAllData(companyId: string): Promise<void> {
     console.log('Pulling all data from cloud...');
 
-    // Fetch all companies
-    const { data: companies, error: companiesError } = await supabase
+    // Company
+    const { data: company, error: companyError } = await supabase
       .from('companies')
-      .select('*');
+      .select('*')
+      .eq('id', companyId)
+      .single();
 
-    if (companiesError) throw companiesError;
-
-    if (companies) {
-      for (const company of companies) {
-        await offlineStorage.upsertCompany(company);
-      }
+    if (companyError) throw companyError;
+    if (company) {
+      await offlineStorage.upsertCompany(company);
     }
 
-    // Fetch all sales
+    // All sales
     const { data: sales, error: salesError } = await supabase
       .from('sales')
-      .select('*');
+      .select('*')
+      .eq('company_id', companyId);
 
     if (salesError) throw salesError;
 
@@ -353,7 +543,7 @@ class SyncService {
       }
     }
 
-    // Fetch all lots
+    // All lots
     const { data: lots, error: lotsError } = await supabase
       .from('lots')
       .select('*');
@@ -366,7 +556,7 @@ class SyncService {
       }
     }
 
-    // Fetch all photos metadata
+    // All photos metadata
     const { data: photos, error: photosError } = await supabase
       .from('photos')
       .select('*');
@@ -403,10 +593,18 @@ class SyncService {
     return {
       pendingCount: pendingItems.length,
       unsyncedPhotosCount: unsyncedPhotos.length,
-      tempLotNumbersCount: 0, // TODO: Implement if needed
+      tempLotNumbersCount: 0,
       lastSyncTime,
       isSyncing: this.isSyncing,
     };
+  }
+
+  getSyncProgress() {
+    return this.syncProgress;
+  }
+
+  isSyncInProgress() {
+    return this.isSyncing;
   }
 }
 
