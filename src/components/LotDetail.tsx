@@ -627,14 +627,16 @@ export default function LotDetail() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="md:col-span-2">
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Item Name *
+                Item Name * (max 100 characters)
               </label>
               <input
                 type="text"
                 value={lot.name || ''}
-                onChange={(e) => setLot({ ...lot, name: toTitleCase(e.target.value) })}
+                onChange={(e) => setLot({ ...lot, name: e.target.value.slice(0, 100) })}
+                onBlur={(e) => setLot({ ...lot, name: toTitleCase(e.target.value.slice(0, 100)) })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
                 placeholder="e.g., Victorian Walnut Dresser"
+                maxLength={100}
               />
             </div>
 

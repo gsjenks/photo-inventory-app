@@ -21,6 +21,9 @@ export default function LotsList({ lots, saleId, onRefresh }: LotsListProps) {
   useEffect(() => {
     if (lots?.length > 0) {
       loadPrimaryPhotos();
+    } else {
+      // Clear photo URLs when no lots
+      setPhotoUrls({});
     }
   }, [lots]);
 
@@ -329,7 +332,11 @@ export default function LotsList({ lots, saleId, onRefresh }: LotsListProps) {
         <LotViewModal
           lot={selectedLot}
           saleId={saleId}
-          onClose={() => setSelectedLot(null)}
+          onClose={() => {
+            setSelectedLot(null);
+            // Refresh photos when closing modal in case they changed
+            loadPrimaryPhotos();
+          }}
           onDelete={() => {
             setSelectedLot(null);
             onRefresh();

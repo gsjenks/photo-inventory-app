@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import offlineStorage from '../services/Offlinestorage';
 import type { Lot, Photo } from '../types';
 import { X, Edit, Trash2, ChevronLeft, ChevronRight, Star, ArrowLeft } from 'lucide-react';
 
@@ -20,51 +21,89 @@ export default function LotViewModal({ lot, saleId, onClose, onDelete }: LotView
 
   useEffect(() => {
     loadPhotos();
+    
+    // Cleanup object URLs on unmount
+    return () => {
+      Object.values(photoUrls).forEach(url => {
+        if (url.startsWith('blob:')) {
+          URL.revokeObjectURL(url);
+        }
+      });
+    };
   }, [lot.id]);
 
   const loadPhotos = async () => {
     setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('photos')
-        .select('*')
-        .eq('lot_id', lot.id)
-        .order('is_primary', { ascending: false })
-        .order('created_at');
+      let photoData: Photo[] = [];
+      const urls: Record<string, string> = {};
 
-      if (error) throw error;
-      setPhotos(data || []);
-
-      // Load URLs for all photos
-      if (data && data.length > 0) {
-        const urls: Record<string, string> = {};
-        for (const photo of data) {
-          // Validate file_path exists
-          if (!photo.file_path) {
-            console.debug(`Photo ${photo.id} has no file_path, skipping`);
-            continue;
-          }
-
-          try {
-            const { data: urlData, error: storageError } = await supabase.storage
-              .from('photos')
-              .createSignedUrl(photo.file_path, 3600);
-            
-            if (storageError) {
-              console.debug(`Storage error for photo ${photo.id}:`, storageError.message);
-              continue; // Skip this photo, don't crash
-            }
-
-            if (urlData?.signedUrl) {
-              urls[photo.id] = urlData.signedUrl;
-            }
-          } catch (urlError) {
-            console.debug(`Failed to create signed URL for photo ${photo.id}:`, urlError);
-            // Continue with other photos
+      // Try loading from IndexedDB first (for local/offline photos)
+      const localPhotos = await offlineStorage.getPhotosByLot(lot.id);
+      if (localPhotos && localPhotos.length > 0) {
+        photoData = localPhotos;
+        
+        // Create object URLs from blobs stored in IndexedDB
+        for (const photo of localPhotos) {
+          const blob = await offlineStorage.getPhotoBlob(photo.id);
+          if (blob) {
+            urls[photo.id] = URL.createObjectURL(blob);
           }
         }
-        setPhotoUrls(urls);
       }
+
+      // Also try loading from Supabase (for synced photos)
+      try {
+        const { data, error } = await supabase
+          .from('photos')
+          .select('*')
+          .eq('lot_id', lot.id)
+          .order('is_primary', { ascending: false })
+          .order('created_at');
+
+        if (!error && data && data.length > 0) {
+          // Merge with local photos, preferring Supabase data for synced items
+          const photoMap = new Map(photoData.map(p => [p.id, p]));
+          data.forEach(p => photoMap.set(p.id, p));
+          photoData = Array.from(photoMap.values());
+
+          // Load URLs for all photos from Supabase
+          for (const photo of data) {
+            // Skip if we already have a URL from IndexedDB
+            if (urls[photo.id]) continue;
+
+            // Validate file_path exists
+            if (!photo.file_path) {
+              console.debug(`Photo ${photo.id} has no file_path, skipping`);
+              continue;
+            }
+
+            try {
+              const { data: urlData, error: storageError } = await supabase.storage
+                .from('photos')
+                .createSignedUrl(photo.file_path, 3600);
+              
+              if (storageError) {
+                console.debug(`Storage error for photo ${photo.id}:`, storageError.message);
+                continue; // Skip this photo, don't crash
+              }
+
+              if (urlData?.signedUrl) {
+                urls[photo.id] = urlData.signedUrl;
+              }
+            } catch (urlError) {
+              console.debug(`Failed to create signed URL for photo ${photo.id}:`, urlError);
+              // Continue with other photos
+            }
+          }
+        }
+      } catch (supabaseError) {
+        // Silently handle Supabase errors (might be offline)
+        console.debug('Supabase photo fetch failed:', supabaseError);
+      }
+
+      setPhotos(photoData);
+      setPhotoUrls(urls);
     } catch (error) {
       console.error('Error loading photos:', error);
     } finally {
@@ -209,18 +248,18 @@ export default function LotViewModal({ lot, saleId, onClose, onDelete }: LotView
               ) : (
                 <div className="space-y-4">
                   {/* Main Photo Display */}
-                  <div className="relative bg-gray-100 rounded-lg overflow-hidden">
-                    <div className="aspect-video flex items-center justify-center">
-                      {photoUrls[photos[currentPhotoIndex]?.id] ? (
-                        <img
-                          src={photoUrls[photos[currentPhotoIndex].id]}
-                          alt={lot.name}
-                          className="max-w-full max-h-full object-contain"
-                        />
-                      ) : (
+                  <div className="relative bg-gray-100 rounded-lg overflow-hidden" style={{ height: '500px' }}>
+                    {photoUrls[photos[currentPhotoIndex]?.id] ? (
+                      <img
+                        src={photoUrls[photos[currentPhotoIndex].id]}
+                        alt={`Photo ${currentPhotoIndex + 1}`}
+                        className="w-full h-full object-contain"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center">
                         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600" />
-                      )}
-                    </div>
+                      </div>
+                    )}
 
                     {/* Primary Badge */}
                     {photos[currentPhotoIndex]?.is_primary && (
