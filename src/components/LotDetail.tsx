@@ -248,6 +248,13 @@ export default function LotDetail() {
     }
   };
 
+  /**
+   * Handle camera capture - MOBILE-FIRST APPROACH
+   * Photo save flow:
+   * 1. Device Gallery (Native Camera API - saveToGallery: true)
+   * 2. IndexedDB (Offline access within app)
+   * 3. Supabase Storage (Cloud sync when online)
+   */
   const handleCamera = async () => {
     if (isNewLot) {
       alert('Please save the lot first before adding photos');
@@ -255,10 +262,14 @@ export default function LotDetail() {
     }
 
     try {
+      // CameraService.captureAndSave now:
+      // 1. Saves photo to device gallery (mobile-first via saveToGallery: true)
+      // 2. Saves to IndexedDB for offline access
+      // 3. Queues for Supabase upload when online
       const result = await CameraService.captureAndSave(lotId!, photos.length === 0);
       
       if (result.success && result.photoId) {
-        // Add to sync queue for upload when online
+        // Add to sync queue for upload when online (if not already online)
         if (!isOnline) {
           await offlineStorage.addPendingSyncItem({
             id: `photo_${result.photoId}`,
@@ -266,7 +277,12 @@ export default function LotDetail() {
             table: 'photos',
             data: { photoId: result.photoId, lotId: lotId }
           });
+          
+          console.log('📸 Photo saved to device gallery and IndexedDB. Will sync to cloud when online.');
+        } else {
+          console.log('📸 Photo saved to device gallery, IndexedDB, and queued for Supabase upload.');
         }
+        
         await loadPhotos();
       } else if (result.error) {
         alert(`Failed to capture photo: ${result.error}`);
@@ -696,6 +712,7 @@ export default function LotDetail() {
               <ImageIcon className="w-12 h-12 text-gray-400 mx-auto mb-4" />
               <p className="text-gray-600 mb-2">No photos yet</p>
               <p className="text-sm text-gray-500">Use the buttons at the bottom to add photos</p>
+              <p className="text-xs text-indigo-600 mt-2 font-medium">📸 Camera photos are saved to your device gallery</p>
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">

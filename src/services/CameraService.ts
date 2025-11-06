@@ -1,6 +1,5 @@
 // services/CameraService.ts
-// Native Camera Service with Capacitor for mobile devices
-// Supports zoom, brightness, focus, crop, and other native camera features
+// Native Camera Service with device gallery saving (mobile-first)
 
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 import type { Photo as CapacitorPhoto } from '@capacitor/camera';
@@ -15,6 +14,7 @@ interface CameraOptions {
   correctOrientation?: boolean;
   width?: number;
   height?: number;
+  saveToGallery?: boolean;
 }
 
 class CameraService {
@@ -30,12 +30,9 @@ class CameraService {
    */
   async hasCamera(): Promise<boolean> {
     if (this.isNativePlatform()) {
-      // On native platforms, assume camera is available
-      // Capacitor will handle permissions
       return true;
     }
 
-    // Web fallback
     if ('mediaDevices' in navigator && 'getUserMedia' in navigator.mediaDevices) {
       try {
         const devices = await navigator.mediaDevices.enumerateDevices();
@@ -48,37 +45,30 @@ class CameraService {
   }
 
   /**
-   * Capture photo using native camera with all device features
-   * On mobile: Uses native camera with zoom, focus, brightness, etc.
-   * On web: Falls back to HTML5 camera
+   * Capture photo using native camera
+   * MOBILE-FIRST: Automatically saves to device gallery
    */
   async capturePhoto(options: CameraOptions = {}): Promise<CapacitorPhoto | null> {
     const {
       quality = 90,
-      allowEditing = true, // Enable native editing (crop, rotate, etc.)
+      allowEditing = true,
       resultType = CameraResultType.Uri,
       correctOrientation = true,
+      saveToGallery = true, // CRITICAL: Save to device gallery
       width,
       height,
     } = options;
 
     try {
-      // Use Capacitor Camera - provides native camera features on mobile
       const photo = await Camera.getPhoto({
         quality,
-        allowEditing, // Enables crop, rotate on iOS/Android
+        allowEditing,
         resultType,
-        source: CameraSource.Camera, // Open camera directly
-        correctOrientation, // Auto-correct orientation
+        source: CameraSource.Camera,
+        correctOrientation,
+        saveToGallery, // Photo will be saved to device gallery
         width,
         height,
-        // Native camera automatically provides:
-        // - Zoom controls
-        // - Focus tap-to-focus
-        // - Flash/lighting controls
-        // - HDR (if device supports)
-        // - Grid lines
-        // - Crop/rotate (if allowEditing=true)
       });
 
       return photo;
@@ -108,7 +98,7 @@ class CameraService {
       if (photo) {
         photos.push(photo);
       } else {
-        break; // User cancelled
+        break;
       }
     }
     
@@ -116,16 +106,11 @@ class CameraService {
   }
 
   /**
-   * Select photo(s) from gallery/photos app
-   * On mobile: Opens native photo picker with multi-select
-   * On web: Opens file picker
+   * Select photo(s) from gallery
    */
   async selectFromGallery(multiple: boolean = false): Promise<CapacitorPhoto[]> {
     try {
       if (multiple && this.isNativePlatform()) {
-        // For multiple photos, we need to call the picker multiple times
-        // or use the Capacitor Community plugin
-        // For now, let user pick one at a time
         const photos: CapacitorPhoto[] = [];
         
         while (true) {
@@ -139,7 +124,7 @@ class CameraService {
             quality: 90,
             allowEditing: true,
             resultType: CameraResultType.Uri,
-            source: CameraSource.Photos, // Open gallery
+            source: CameraSource.Photos,
             correctOrientation: true,
           });
           
@@ -152,7 +137,6 @@ class CameraService {
         
         return photos;
       } else {
-        // Single photo
         const photo = await Camera.getPhoto({
           quality: 90,
           allowEditing: true,
@@ -176,21 +160,16 @@ class CameraService {
    * Convert Capacitor Photo to Blob
    */
   async photoToBlob(photo: CapacitorPhoto): Promise<Blob> {
-    // If we have base64
     if (photo.base64String) {
       return this.base64ToBlob(photo.base64String, photo.format || 'jpeg');
     }
     
-    // If we have a web path (most common on mobile)
     if (photo.webPath) {
       const response = await fetch(photo.webPath);
       return await response.blob();
     }
     
-    // If we have a path (file path on device)
     if (photo.path) {
-      // For native file paths, we need to use Filesystem plugin
-      // For now, throw an error - this should be handled by webPath
       throw new Error('Cannot convert file path to blob without Filesystem plugin');
     }
     
@@ -213,22 +192,25 @@ class CameraService {
   }
 
   /**
-   * High-level method to capture photo and save offline-first
+   * MOBILE-FIRST: Capture photo and save to device gallery + IndexedDB + Supabase (if online)
    */
   async captureAndSave(
     lotId: string,
     isPrimary: boolean = false
   ): Promise<{ success: boolean; photoId?: string; error?: string }> {
     try {
+      // Step 1: Capture photo with native camera (saves to device gallery automatically)
       const photo = await this.capturePhoto({
         quality: 90,
-        allowEditing: true, // Enable crop/rotate
+        allowEditing: true,
+        saveToGallery: true, // MOBILE-FIRST: Save to device gallery
       });
 
       if (!photo) {
         return { success: false, error: 'No photo captured' };
       }
 
+      // Step 2: Save to IndexedDB and queue for Supabase upload
       return await this.savePhoto(photo, lotId, isPrimary);
     } catch (error) {
       console.error('Error in captureAndSave:', error);
@@ -240,7 +222,8 @@ class CameraService {
   }
 
   /**
-   * Save a Capacitor Photo to IndexedDB (offline-first)
+   * Save a Capacitor Photo to IndexedDB and queue for Supabase
+   * Photo is already saved to device gallery from camera capture
    */
   async savePhoto(
     photo: CapacitorPhoto,
@@ -258,7 +241,7 @@ class CameraService {
       const fileName = `${lotId}_${timestamp}.${format}`;
       const filePath = `${lotId}/${fileName}`;
 
-      // Save photo using PhotoService (offline-first)
+      // Save to IndexedDB (offline-first)
       const result = await PhotoService.savePhoto(
         photoId,
         lotId,
@@ -283,7 +266,7 @@ class CameraService {
   }
 
   /**
-   * Capture multiple photos and save them
+   * Capture multiple photos and save them (all saved to device gallery)
    */
   async captureMultipleAndSave(
     lotId: string,
@@ -306,16 +289,18 @@ class CameraService {
       
       if (!shouldContinue) break;
       
+      // Each photo is saved to device gallery during capture
       const photo = await this.capturePhoto({
         quality: 90,
         allowEditing: true,
+        saveToGallery: true,
       });
       
       if (!photo) {
-        break; // User cancelled
+        break;
       }
 
-      const isPrimary = photoIds.length === 0; // First photo is primary
+      const isPrimary = photoIds.length === 0;
       const result = await this.savePhoto(photo, lotId, isPrimary);
       
       if (result.success && result.photoId) {
@@ -353,7 +338,7 @@ class CameraService {
     let failed = 0;
 
     for (let i = 0; i < photos.length; i++) {
-      const isPrimary = i === 0; // First photo is primary
+      const isPrimary = i === 0;
       const result = await this.savePhoto(photos[i], lotId, isPrimary);
       
       if (result.success && result.photoId) {
@@ -423,7 +408,7 @@ class CameraService {
   }
 
   /**
-   * Request camera permissions (useful for checking before opening camera)
+   * Request camera permissions
    */
   async requestPermissions(): Promise<boolean> {
     try {
