@@ -6,6 +6,7 @@ import ConnectivityService from '../services/ConnectivityService';
 import { getNextLotNumber, isTemporaryNumber } from '../services/LotNumberService';
 import offlineStorage from '../services/Offlinestorage';
 import CameraService from '../services/CameraService';
+import PhotoService from '../services/PhotoService';
 import type { Lot, Photo } from '../types';
 import { 
   ArrowLeft, 
@@ -57,6 +58,9 @@ export default function LotDetail() {
   useEffect(() => {
     const unsubscribe = ConnectivityService.onStatusChange((online) => {
       setIsOnline(online);
+      if (online) {
+        console.log('Connection restored - photos will sync automatically');
+      }
     });
     return unsubscribe;
   }, []);
@@ -253,7 +257,16 @@ export default function LotDetail() {
     try {
       const result = await CameraService.captureAndSave(lotId!, photos.length === 0);
       
-      if (result.success) {
+      if (result.success && result.photoId) {
+        // Add to sync queue for upload when online
+        if (!isOnline) {
+          await offlineStorage.addPendingSyncItem({
+            id: `photo_${result.photoId}`,
+            type: 'create',
+            table: 'photos',
+            data: { photoId: result.photoId, lotId: lotId }
+          });
+        }
         await loadPhotos();
       } else if (result.error) {
         alert(`Failed to capture photo: ${result.error}`);
@@ -393,64 +406,126 @@ export default function LotDetail() {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
-    if (!isOnline) {
-      alert('Photo upload requires an internet connection');
+    if (isNewLot) {
+      alert('Please save the lot first before adding photos');
       return;
     }
 
     try {
       for (const file of Array.from(files)) {
-        // Generate unique filename
+        const photoId = crypto.randomUUID();
         const fileExt = file.name.split('.').pop();
-        const fileName = `${crypto.randomUUID()}.${fileExt}`;
+        const fileName = `${lotId}_${Date.now()}.${fileExt}`;
         const filePath = `${saleId}/${lotId}/${fileName}`;
 
-        // Upload to storage
-        const { error: uploadError } = await supabase.storage
-          .from('photos')
-          .upload(filePath, file);
+        // Determine if this should be primary (first photo)
+        const isPrimary = photos.length === 0;
 
-        if (uploadError) throw uploadError;
+        // ALWAYS save to IndexedDB first (mobile-first)
+        await PhotoService.savePhoto(photoId, lotId!, file, filePath, file.name, isPrimary);
 
-        // Create photo record
-        const { error: insertError } = await supabase
-          .from('photos')
-          .insert({
-            lot_id: lotId,
-            file_path: filePath,
-            file_name: file.name,
-            is_primary: photos.length === 0
+        if (isOnline) {
+          // If online, also upload to Supabase immediately
+          const { error: uploadError } = await supabase.storage
+            .from('photos')
+            .upload(filePath, file);
+
+          if (uploadError) {
+            console.error('Upload error:', uploadError);
+            // Don't throw - already saved locally
+          } else {
+            // Create photo record in database
+            const { error: insertError } = await supabase
+              .from('photos')
+              .insert({
+                id: photoId,
+                lot_id: lotId,
+                file_path: filePath,
+                file_name: file.name,
+                is_primary: isPrimary
+              });
+
+            if (!insertError) {
+              // Mark as synced in IndexedDB
+              await offlineStorage.upsertPhoto({
+                id: photoId,
+                lot_id: lotId!,
+                file_path: filePath,
+                file_name: file.name,
+                is_primary: isPrimary,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+                synced: true
+              });
+            }
+          }
+        } else {
+          // If offline, queue for sync when connection returns
+          await offlineStorage.addPendingSyncItem({
+            id: `photo_upload_${photoId}`,
+            type: 'create',
+            table: 'photos',
+            data: {
+              id: photoId,
+              lot_id: lotId,
+              file_path: filePath,
+              file_name: file.name,
+              is_primary: isPrimary
+            }
           });
-
-        if (insertError) throw insertError;
+        }
       }
 
       // Reload photos
       await loadPhotos();
-      alert(`${files.length} photo(s) uploaded successfully`);
+      const msg = isOnline 
+        ? `${files.length} photo(s) uploaded successfully`
+        : `${files.length} photo(s) saved locally (will sync when online)`;
+      alert(msg);
     } catch (error) {
       console.error('Error uploading photos:', error);
       alert('Failed to upload photos');
+    } finally {
+      // Reset file input
+      e.target.value = '';
     }
   };
 
   const handleSetPrimaryPhoto = async (photoId: string) => {
     try {
-      // Set all photos to non-primary
-      await supabase
-        .from('photos')
-        .update({ is_primary: false })
-        .eq('lot_id', lotId);
+      if (isOnline) {
+        // Update in Supabase
+        await supabase
+          .from('photos')
+          .update({ is_primary: false })
+          .eq('lot_id', lotId);
 
-      // Set selected photo as primary
-      await supabase
-        .from('photos')
-        .update({ is_primary: true })
-        .eq('id', photoId);
+        await supabase
+          .from('photos')
+          .update({ is_primary: true })
+          .eq('id', photoId);
+      } else {
+        // Queue for sync when online
+        await offlineStorage.addPendingSyncItem({
+          id: `photo_primary_${photoId}_${Date.now()}`,
+          type: 'update',
+          table: 'photos',
+          data: {
+            operation: 'set_primary',
+            lot_id: lotId,
+            photo_id: photoId
+          }
+        });
+      }
 
+      // Always update in IndexedDB (mobile-first)
+      await PhotoService.setPrimaryPhoto(lotId!, photoId);
+
+      // Reload photos to reflect changes
       await loadPhotos();
     } catch (error) {
       console.error('Error setting primary photo:', error);
+      alert('Failed to set primary photo');
     }
   };
 
@@ -458,15 +533,64 @@ export default function LotDetail() {
     if (!confirm('Delete this photo?')) return;
 
     try {
-      // Delete from storage
-      await supabase.storage.from('photos').remove([filePath]);
+      // Find if deleted photo was primary
+      const deletedPhoto = photos.find(p => p.id === photoId);
+      const wasPrimary = deletedPhoto?.is_primary;
 
-      // Delete record
-      await supabase
-        .from('photos')
-        .delete()
-        .eq('id', photoId);
+      if (isOnline) {
+        // Delete from Supabase storage
+        await supabase.storage.from('photos').remove([filePath]);
 
+        // Delete record from database
+        await supabase
+          .from('photos')
+          .delete()
+          .eq('id', photoId);
+      } else {
+        // Queue for deletion when online
+        await offlineStorage.addPendingSyncItem({
+          id: `photo_delete_${photoId}`,
+          type: 'delete',
+          table: 'photos',
+          data: {
+            id: photoId,
+            file_path: filePath
+          }
+        });
+      }
+
+      // Always delete from IndexedDB
+      await PhotoService.deletePhoto(photoId);
+
+      // If it was primary and there are other photos, set the first one as primary
+      if (wasPrimary && photos.length > 1) {
+        const remainingPhotos = photos.filter(p => p.id !== photoId);
+        if (remainingPhotos.length > 0) {
+          const newPrimaryId = remainingPhotos[0].id;
+          
+          if (isOnline) {
+            await supabase
+              .from('photos')
+              .update({ is_primary: true })
+              .eq('id', newPrimaryId);
+          } else {
+            await offlineStorage.addPendingSyncItem({
+              id: `photo_primary_${newPrimaryId}_${Date.now()}`,
+              type: 'update',
+              table: 'photos',
+              data: {
+                operation: 'set_primary',
+                lot_id: lotId,
+                photo_id: newPrimaryId
+              }
+            });
+          }
+          
+          await PhotoService.setPrimaryPhoto(lotId!, newPrimaryId);
+        }
+      }
+
+      // Reload photos to reflect changes
       await loadPhotos();
     } catch (error) {
       console.error('Error deleting photo:', error);
@@ -611,6 +735,15 @@ export default function LotDetail() {
                       <div className="bg-indigo-600 text-white text-xs px-2 py-1 rounded flex items-center gap-1">
                         <Star className="w-3 h-3 fill-current" />
                         Primary
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Unsynced indicator */}
+                  {!photo.synced && !isOnline && (
+                    <div className="absolute bottom-2 left-2">
+                      <div className="bg-yellow-500 text-white text-xs px-2 py-1 rounded">
+                        Offline
                       </div>
                     </div>
                   )}
