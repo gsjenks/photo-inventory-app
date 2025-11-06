@@ -44,6 +44,11 @@
   --font-family-sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
+/* Disable native pull-to-refresh */
+html {
+  overscroll-behavior-y: contain;
+}
+
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
@@ -51,4 +56,14 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  
+  /* Disable pull-to-refresh */
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Prevent pull-to-refresh on main app container */
+#root {
+  overscroll-behavior-y: contain;
+  position: relative;
 }

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Package, Users, FileText, BarChart3, ArrowLeft, Plus, Camera, Upload } from 'lucide-react';
+import { Package, Users, FileText, BarChart3, ArrowLeft, Plus, Upload } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useFooter } from '../context/FooterContext';
 import type { Sale, Lot, Contact, Document } from '../types';
@@ -56,16 +56,6 @@ export default function SaleDetail() {
     switch (activeTab) {
       case 'items':
         setActions([
-          {
-            id: 'camera',
-            label: 'Camera',
-            icon: <Camera className="w-4 h-4" />,
-            onClick: () => {
-              // This would open camera for direct photo capture
-              alert('Camera feature coming soon for direct photo capture');
-            },
-            variant: 'secondary'
-          },
           {
             id: 'add-lot',
             label: 'New Item',
