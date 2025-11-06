@@ -169,7 +169,7 @@ class CameraService {
   }
 
   /**
-   * FAST: Queue photo for background processing and return immediately
+   * FAST: Save photo using PhotoService's fast method
    */
   private async savePhotoFast(
     photo: CapacitorPhoto,
@@ -183,8 +183,8 @@ class CameraService {
       const fileName = `${lotId}_${timestamp}.${format}`;
       const filePath = `${lotId}/${fileName}`;
 
-      // Queue for background processing - DOES NOT BLOCK
-      PhotoService.queuePhotoForProcessing(
+      // Use PhotoService's fast save method
+      const result = await PhotoService.savePhotoFast(
         photoId,
         lotId,
         photo,
@@ -193,13 +193,16 @@ class CameraService {
         isPrimary
       );
 
-      // Return immediately
-      return { success: true, photoId };
+      if (result.success) {
+        return { success: true, photoId };
+      } else {
+        return { success: false, error: result.error };
+      }
     } catch (error) {
-      console.error('Error queueing photo:', error);
+      console.error('Error saving photo fast:', error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to queue photo'
+        error: error instanceof Error ? error.message : 'Failed to save photo'
       };
     }
   }

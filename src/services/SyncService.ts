@@ -1,5 +1,5 @@
 import { supabase } from '../lib/supabase';
-import offlineStorage from '../services/Offlinestorage';
+import offlineStorage from './Offlinestorage';
 import PhotoService from './PhotoService';
 import * as LotNumberService from './LotNumberService';
 

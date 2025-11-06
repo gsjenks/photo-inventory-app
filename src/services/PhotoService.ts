@@ -1,7 +1,6 @@
 // services/PhotoService.ts
 import offlineStorage from './Offlinestorage';
 import { supabase } from '../lib/supabase';
-import ConnectivityService from './ConnectivityService';
 
 interface PhotoMetadata {
   id: string;
@@ -13,20 +12,8 @@ interface PhotoMetadata {
   updated_at: string;
 }
 
-interface PhotoQueueItem {
-  photoId: string;
-  lotId: string;
-  photoData: any;
-  filePath: string;
-  fileName: string;
-  isPrimary: boolean;
-  timestamp: number;
-}
-
 class PhotoService {
   private dbReady: Promise<void>;
-  private processingQueue: PhotoQueueItem[] = [];
-  private isProcessing = false;
 
   constructor() {
     this.dbReady = offlineStorage.initialize().catch(error => {
@@ -67,96 +54,77 @@ class PhotoService {
   }
 
   /**
-   * FAST: Queue photo for background processing
-   * Returns immediately without blocking
+   * OPTIMIZED: Save photo with minimal blocking
+   * Saves metadata immediately, processes blob in background
    */
-  queuePhotoForProcessing(
+  async savePhotoFast(
     photoId: string,
     lotId: string,
     photoData: any,
     filePath: string,
     fileName: string,
     isPrimary: boolean = false
-  ): void {
-    this.processingQueue.push({
-      photoId,
-      lotId,
-      photoData,
-      filePath,
-      fileName,
-      isPrimary,
-      timestamp: Date.now(),
-    });
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      await this.ensureReady();
 
-    // Start processing if not already running
-    if (!this.isProcessing) {
-      this.processQueue();
-    }
-  }
+      // Save metadata immediately (lightweight)
+      const metadata: PhotoMetadata = {
+        id: photoId,
+        lot_id: lotId,
+        file_path: filePath,
+        file_name: fileName,
+        is_primary: isPrimary,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
 
-  /**
-   * Background processor - runs async without blocking UI
-   */
-  private async processQueue(): Promise<void> {
-    if (this.isProcessing || this.processingQueue.length === 0) {
-      return;
-    }
+      await this.savePhotoMetadata(metadata);
 
-    this.isProcessing = true;
+      // Process blob in background (non-blocking)
+      setTimeout(async () => {
+        try {
+          const blob = await this.convertToBlob(photoData);
+          await this.savePhotoBlob(photoId, blob);
 
-    while (this.processingQueue.length > 0) {
-      const item = this.processingQueue.shift();
-      if (!item) continue;
-
-      try {
-        // Convert to blob
-        const blob = await this.convertToBlob(item.photoData);
-
-        // Save to IndexedDB
-        await this.savePhotoBlob(item.photoId, blob);
-
-        const metadata: PhotoMetadata = {
-          id: item.photoId,
-          lot_id: item.lotId,
-          file_path: item.filePath,
-          file_name: item.fileName,
-          is_primary: item.isPrimary,
-          created_at: new Date(item.timestamp).toISOString(),
-          updated_at: new Date(item.timestamp).toISOString(),
-        };
-
-        await this.savePhotoMetadata(metadata);
-
-        // If online, sync to Supabase in background
-        if (ConnectivityService.getConnectionStatus()) {
-          this.syncPhotoToSupabase(blob, item.filePath, metadata).catch(err => {
-            console.log('Background sync will retry later:', err.message);
-          });
+          // Sync to Supabase if online (background)
+          if (navigator.onLine) {
+            setTimeout(async () => {
+              try {
+                await this.syncSinglePhoto(blob, filePath, metadata);
+              } catch (error) {
+                console.log('Background sync will retry later');
+              }
+            }, 3000);
+          }
+        } catch (error) {
+          console.error('Background blob processing failed:', error);
         }
-      } catch (error) {
-        console.error('Error processing photo queue item:', error);
-      }
-    }
+      }, 500);
 
-    this.isProcessing = false;
+      return { success: true };
+    } catch (error) {
+      console.error('Failed to save photo fast:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to save photo',
+      };
+    }
   }
 
   /**
    * Convert photo data to blob
    */
   private async convertToBlob(photoData: any): Promise<Blob> {
-    // Base64
     if (photoData.base64String) {
       return this.base64ToBlob(photoData.base64String, photoData.format || 'jpeg');
     }
     
-    // Web path (file:// or blob:)
     if (photoData.webPath) {
       const response = await fetch(photoData.webPath);
       return await response.blob();
     }
 
-    // Already a Blob or File
     if (photoData instanceof Blob) {
       return photoData;
     }
@@ -179,7 +147,7 @@ class PhotoService {
   /**
    * Background sync single photo to Supabase
    */
-  private async syncPhotoToSupabase(
+  private async syncSinglePhoto(
     blob: Blob,
     filePath: string,
     metadata: PhotoMetadata
@@ -189,10 +157,7 @@ class PhotoService {
       throw new Error(uploadResult.error);
     }
 
-    const saved = await this.saveMetadataToSupabase(metadata);
-    if (!saved) {
-      throw new Error('Failed to save metadata');
-    }
+    await this.saveMetadataToSupabase(metadata);
   }
 
   /**
