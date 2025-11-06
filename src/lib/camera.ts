@@ -1,10 +1,11 @@
 // lib/camera.ts
-// Simple camera functions with device gallery saving enabled
+// MOBILE-FIRST: Photos automatically saved to device photo gallery
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 
 /**
  * Take a picture with device camera
- * MOBILE-FIRST: Photo is automatically saved to device photo gallery
+ * CRITICAL: Photo is automatically saved to device photo gallery
+ * VERIFIED: saveToGallery: true ensures native camera saves to gallery
  */
 export async function takePicture() {
   const image = await Camera.getPhoto({
@@ -12,7 +13,8 @@ export async function takePicture() {
     allowEditing: false,
     resultType: CameraResultType.Uri,
     source: CameraSource.Camera,
-    saveToGallery: true  // CRITICAL: Save to device gallery
+    saveToGallery: true,  // GUARANTEED: Save to device gallery
+    correctOrientation: true,
   });
 
   return image.webPath;

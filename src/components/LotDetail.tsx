@@ -6,7 +6,6 @@ import ConnectivityService from '../services/ConnectivityService';
 import { getNextLotNumber, isTemporaryNumber } from '../services/LotNumberService';
 import offlineStorage from '../services/Offlinestorage';
 import CameraService from '../services/CameraService';
-import PhotoService from '../services/PhotoService';
 import type { Lot, Photo } from '../types';
 import { 
   ArrowLeft, 
@@ -15,7 +14,6 @@ import {
   Upload,
   Camera, 
   Sparkles,
-  X,
   Star,
   Image as ImageIcon
 } from 'lucide-react';
@@ -51,7 +49,6 @@ export default function LotDetail() {
   const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [aiProcessing, setAiProcessing] = useState(false);
   const isNewLot = lotId === 'new';
 
   // Monitor connectivity
@@ -79,7 +76,6 @@ export default function LotDetail() {
     if (!isNewLot && lotId) {
       loadPhotos();
     }
-
   }, [lotId, isNewLot]);
 
   // Cleanup object URLs on unmount to prevent memory leaks
@@ -124,8 +120,7 @@ export default function LotDetail() {
         icon: <Sparkles className="w-4 h-4" />,
         onClick: handleAIEnrich,
         variant: 'ai',
-        disabled: photos.length === 0 || aiProcessing,
-        loading: aiProcessing
+        disabled: photos.length === 0
       },
       {
         id: 'save',
@@ -139,7 +134,7 @@ export default function LotDetail() {
     ]);
 
     return () => clearActions();
-  }, [lot, photos, isNewLot, saving, aiProcessing]);
+  }, [lot, photos, isNewLot, saving]);
 
   const initializeNewLot = async () => {
     try {
@@ -223,21 +218,27 @@ export default function LotDetail() {
         if (!error && data && data.length > 0) {
           // Merge with local photos, preferring Supabase data for synced items
           const photoMap = new Map(photoData.map(p => [p.id, p]));
-          data.forEach(p => photoMap.set(p.id, p));
-          photoData = Array.from(photoMap.values());
+          
+          for (const supabasePhoto of data) {
+            photoMap.set(supabasePhoto.id, supabasePhoto);
+            
+            // Try to get URL if not already have one
+            if (!urls[supabasePhoto.id] && supabasePhoto.file_path) {
+              try {
+                const { data: urlData } = await supabase.storage
+                  .from('photos')
+                  .createSignedUrl(supabasePhoto.file_path, 3600);
 
-          // Load Supabase URLs for synced photos
-          for (const photo of data) {
-            if (!urls[photo.id]) {
-              const { data: urlData } = await supabase.storage
-                .from('photos')
-                .createSignedUrl(photo.file_path, 3600);
-              
-              if (urlData?.signedUrl) {
-                urls[photo.id] = urlData.signedUrl;
+                if (urlData?.signedUrl) {
+                  urls[supabasePhoto.id] = urlData.signedUrl;
+                }
+              } catch (urlError) {
+                console.debug('Could not load URL for photo', supabasePhoto.id);
               }
             }
           }
+          
+          photoData = Array.from(photoMap.values());
         }
       }
 
@@ -249,11 +250,8 @@ export default function LotDetail() {
   };
 
   /**
-   * Handle camera capture - MOBILE-FIRST APPROACH
-   * Photo save flow:
-   * 1. Device Gallery (Native Camera API - saveToGallery: true)
-   * 2. IndexedDB (Offline access within app)
-   * 3. Supabase Storage (Cloud sync when online)
+   * OPTIMIZED: Instant camera capture with immediate UI update
+   * Photo appears in UI immediately, then saves in background
    */
   const handleCamera = async () => {
     if (isNewLot) {
@@ -262,35 +260,87 @@ export default function LotDetail() {
     }
 
     try {
-      // CameraService.captureAndSave now:
-      // 1. Saves photo to device gallery (mobile-first via saveToGallery: true)
-      // 2. Saves to IndexedDB for offline access
-      // 3. Queues for Supabase upload when online
-      const result = await CameraService.captureAndSave(lotId!, photos.length === 0);
+      // INSTANT: Capture and get blob URL immediately
+      const result = await CameraService.captureAndSaveInstant(
+        lotId!,
+        photos.length === 0
+      );
       
-      if (result.success && result.photoId) {
-        // Add to sync queue for upload when online (if not already online)
-        if (!isOnline) {
-          await offlineStorage.addPendingSyncItem({
-            id: `photo_${result.photoId}`,
-            type: 'create',
-            table: 'photos',
-            data: { photoId: result.photoId, lotId: lotId }
-          });
-          
-          console.log('📸 Photo saved to device gallery and IndexedDB. Will sync to cloud when online.');
-        } else {
-          console.log('📸 Photo saved to device gallery, IndexedDB, and queued for Supabase upload.');
-        }
-        
-        await loadPhotos();
+      if (result.success && result.photoId && result.blobUrl) {
+        // INSTANT: Update UI immediately with new photo
+        const newPhoto: Photo = {
+          id: result.photoId,
+          lot_id: lotId!,
+          file_path: `${lotId}/${result.photoId}.jpg`,
+          file_name: `Photo_${Date.now()}.jpg`,
+          is_primary: photos.length === 0,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+
+        setPhotos(prev => [...prev, newPhoto]);
+        setPhotoUrls(prev => ({
+          ...prev,
+          [result.photoId!]: result.blobUrl!
+        }));
+
+        console.log('✅ Photo added to gallery instantly. Syncing in background...');
       } else if (result.error) {
-        alert(`Failed to capture photo: ${result.error}`);
+        console.error('Camera error:', result.error);
       }
     } catch (error) {
       console.error('Camera error:', error);
       alert('Failed to access camera');
     }
+  };
+
+  /**
+   * OPTIMIZED: Handle file upload with instant UI update
+   */
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    if (isNewLot) {
+      alert('Please save the lot first before adding photos');
+      return;
+    }
+
+    try {
+      // INSTANT: Get blob URLs and update UI immediately
+      const result = await CameraService.handleFileInput(files, lotId!);
+      
+      if (result.success > 0) {
+        // Create photo metadata for UI
+        const newPhotos: Photo[] = result.photos.map((p, index) => ({
+          id: p.photoId,
+          lot_id: lotId!,
+          file_path: `${lotId}/${p.photoId}.jpg`,
+          file_name: files[index].name,
+          is_primary: photos.length === 0 && index === 0,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }));
+
+        // Create URL map
+        const newUrls: Record<string, string> = {};
+        result.photos.forEach(p => {
+          newUrls[p.photoId] = p.blobUrl;
+        });
+
+        // Update UI immediately
+        setPhotos(prev => [...prev, ...newPhotos]);
+        setPhotoUrls(prev => ({ ...prev, ...newUrls }));
+
+        console.log(`✅ ${result.success} photo(s) added instantly. Syncing in background...`);
+      }
+    } catch (error) {
+      console.error('Upload error:', error);
+      alert('Failed to upload photos');
+    }
+
+    // Reset input
+    e.target.value = '';
   };
 
   // Helper function to convert text to title case
@@ -308,7 +358,6 @@ export default function LotDetail() {
 
     setSaving(true);
     try {
-
       const lotData = {
         ...lot,
         name: toTitleCase(lot.name),
@@ -402,7 +451,7 @@ export default function LotDetail() {
 
         if (error) throw error;
       } else {
-        // Queue for deletion when online
+        // Mark for deletion when back online
         await offlineStorage.addPendingSyncItem({
           id: lotId,
           type: 'delete',
@@ -418,196 +467,62 @@ export default function LotDetail() {
     }
   };
 
-  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-
-    if (isNewLot) {
-      alert('Please save the lot first before adding photos');
-      return;
-    }
-
+  const handleSetPrimary = async (photo: Photo) => {
     try {
-      for (const file of Array.from(files)) {
-        const photoId = crypto.randomUUID();
-        const fileExt = file.name.split('.').pop();
-        const fileName = `${lotId}_${Date.now()}.${fileExt}`;
-        const filePath = `${saleId}/${lotId}/${fileName}`;
+      // Update primary status
+      const updatedPhotos = photos.map(p => ({
+        ...p,
+        is_primary: p.id === photo.id
+      }));
 
-        // Determine if this should be primary (first photo)
-        const isPrimary = photos.length === 0;
+      // Update UI immediately
+      setPhotos(updatedPhotos);
 
-        // ALWAYS save to IndexedDB first (mobile-first)
-        await PhotoService.savePhoto(photoId, lotId!, file, filePath, file.name, isPrimary);
-
-        if (isOnline) {
-          // If online, also upload to Supabase immediately
-          const { error: uploadError } = await supabase.storage
+      // Update in database
+      if (isOnline) {
+        for (const p of updatedPhotos) {
+          await supabase
             .from('photos')
-            .upload(filePath, file);
-
-          if (uploadError) {
-            console.error('Upload error:', uploadError);
-            // Don't throw - already saved locally
-          } else {
-            // Create photo record in database
-            const { error: insertError } = await supabase
-              .from('photos')
-              .insert({
-                id: photoId,
-                lot_id: lotId,
-                file_path: filePath,
-                file_name: file.name,
-                is_primary: isPrimary
-              });
-
-            if (!insertError) {
-              // Mark as synced in IndexedDB
-              await offlineStorage.upsertPhoto({
-                id: photoId,
-                lot_id: lotId!,
-                file_path: filePath,
-                file_name: file.name,
-                is_primary: isPrimary,
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString(),
-                synced: true
-              });
-            }
-          }
-        } else {
-          // If offline, queue for sync when connection returns
-          await offlineStorage.addPendingSyncItem({
-            id: `photo_upload_${photoId}`,
-            type: 'create',
-            table: 'photos',
-            data: {
-              id: photoId,
-              lot_id: lotId,
-              file_path: filePath,
-              file_name: file.name,
-              is_primary: isPrimary
-            }
-          });
+            .update({ is_primary: p.is_primary })
+            .eq('id', p.id);
         }
       }
 
-      // Reload photos
-      await loadPhotos();
-      const msg = isOnline 
-        ? `${files.length} photo(s) uploaded successfully`
-        : `${files.length} photo(s) saved locally (will sync when online)`;
-      alert(msg);
-    } catch (error) {
-      console.error('Error uploading photos:', error);
-      alert('Failed to upload photos');
-    } finally {
-      // Reset file input
-      e.target.value = '';
-    }
-  };
-
-  const handleSetPrimaryPhoto = async (photoId: string) => {
-    try {
-      if (isOnline) {
-        // Update in Supabase
-        await supabase
-          .from('photos')
-          .update({ is_primary: false })
-          .eq('lot_id', lotId);
-
-        await supabase
-          .from('photos')
-          .update({ is_primary: true })
-          .eq('id', photoId);
-      } else {
-        // Queue for sync when online
-        await offlineStorage.addPendingSyncItem({
-          id: `photo_primary_${photoId}_${Date.now()}`,
-          type: 'update',
-          table: 'photos',
-          data: {
-            operation: 'set_primary',
-            lot_id: lotId,
-            photo_id: photoId
-          }
-        });
+      // Update in offline storage
+      for (const p of updatedPhotos) {
+        await offlineStorage.upsertPhoto(p);
       }
-
-      // Always update in IndexedDB (mobile-first)
-      await PhotoService.setPrimaryPhoto(lotId!, photoId);
-
-      // Reload photos to reflect changes
-      await loadPhotos();
     } catch (error) {
       console.error('Error setting primary photo:', error);
-      alert('Failed to set primary photo');
     }
   };
 
-  const handleDeletePhoto = async (photoId: string, filePath: string) => {
+  const handleDeletePhoto = async (photo: Photo) => {
     if (!confirm('Delete this photo?')) return;
 
     try {
-      // Find if deleted photo was primary
-      const deletedPhoto = photos.find(p => p.id === photoId);
-      const wasPrimary = deletedPhoto?.is_primary;
+      // Remove from UI immediately
+      setPhotos(prev => prev.filter(p => p.id !== photo.id));
+      setPhotoUrls(prev => {
+        const newUrls = { ...prev };
+        delete newUrls[photo.id];
+        return newUrls;
+      });
 
+      // Clean up blob URL
+      if (photoUrls[photo.id]?.startsWith('blob:')) {
+        URL.revokeObjectURL(photoUrls[photo.id]);
+      }
+
+      // Delete from storage
       if (isOnline) {
-        // Delete from Supabase storage
-        await supabase.storage.from('photos').remove([filePath]);
-
-        // Delete record from database
-        await supabase
-          .from('photos')
-          .delete()
-          .eq('id', photoId);
-      } else {
-        // Queue for deletion when online
-        await offlineStorage.addPendingSyncItem({
-          id: `photo_delete_${photoId}`,
-          type: 'delete',
-          table: 'photos',
-          data: {
-            id: photoId,
-            file_path: filePath
-          }
-        });
+        await supabase.storage.from('photos').remove([photo.file_path]);
+        await supabase.from('photos').delete().eq('id', photo.id);
       }
 
-      // Always delete from IndexedDB
-      await PhotoService.deletePhoto(photoId);
-
-      // If it was primary and there are other photos, set the first one as primary
-      if (wasPrimary && photos.length > 1) {
-        const remainingPhotos = photos.filter(p => p.id !== photoId);
-        if (remainingPhotos.length > 0) {
-          const newPrimaryId = remainingPhotos[0].id;
-          
-          if (isOnline) {
-            await supabase
-              .from('photos')
-              .update({ is_primary: true })
-              .eq('id', newPrimaryId);
-          } else {
-            await offlineStorage.addPendingSyncItem({
-              id: `photo_primary_${newPrimaryId}_${Date.now()}`,
-              type: 'update',
-              table: 'photos',
-              data: {
-                operation: 'set_primary',
-                lot_id: lotId,
-                photo_id: newPrimaryId
-              }
-            });
-          }
-          
-          await PhotoService.setPrimaryPhoto(lotId!, newPrimaryId);
-        }
-      }
-
-      // Reload photos to reflect changes
-      await loadPhotos();
+      // Delete from offline storage
+      await offlineStorage.deletePhoto(photo.id);
+      await offlineStorage.deletePhotoBlob(photo.id);
     } catch (error) {
       console.error('Error deleting photo:', error);
       alert('Failed to delete photo');
@@ -615,182 +530,150 @@ export default function LotDetail() {
   };
 
   const handleAIEnrich = async () => {
-    if (photos.length === 0) {
-      alert('Please upload photos first');
-      return;
-    }
-
-    if (!isOnline) {
-      alert('AI enrichment requires an internet connection');
-      return;
-    }
-
-    setAiProcessing(true);
-    try {
-      // TODO: Implement AI enrichment
-      // This would call your Gemini AI service
-      alert('AI enrichment feature coming soon');
-    } catch (error) {
-      console.error('Error with AI enrichment:', error);
-      alert('AI enrichment failed');
-    } finally {
-      setAiProcessing(false);
-    }
+    // AI enrichment logic here
+    console.log('AI enrichment not yet implemented');
   };
 
-  const formatPrice = (value: any) => value !== undefined && value !== null ? value : '';
+  const formatPrice = (value: number | undefined) => {
+    return value !== undefined && !isNaN(value) ? String(value) : '';
+  };
 
   if (loading) {
     return (
-      <div className="max-w-7xl mx-auto px-4 py-6 pb-20">
-        <div className="animate-pulse">
-          <div className="h-8 bg-gray-200 rounded w-1/4 mb-4"></div>
-          <div className="h-4 bg-gray-200 rounded w-1/3"></div>
-        </div>
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
       </div>
     );
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-6 pb-28">
+    <div className="max-w-4xl mx-auto">
+      {/* Hidden file input */}
+      <input
+        type="file"
+        id="photo-upload"
+        multiple
+        accept="image/*"
+        onChange={handleFileUpload}
+        className="hidden"
+      />
+
       {/* Header */}
-      <div className="mb-6">
-        <button
-          onClick={() => navigate(`/sales/${saleId}`)}
-          className="flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-4 transition-colors"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Back to Sale
-        </button>
-        
-        <div className="flex items-center justify-between">
-          <div className="flex-1">
-            <h1 className="text-3xl font-bold text-gray-900">
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center space-x-4">
+          <button
+            onClick={() => navigate(`/sales/${saleId}`)}
+            className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+          >
+            <ArrowLeft className="w-5 h-5 text-gray-600" />
+          </button>
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">
               {isNewLot ? 'New Item' : 'Edit Item'}
             </h1>
             {lot.lot_number && (
-              <div className="flex items-center gap-2 mt-2">
-                <p className="text-lg font-semibold text-indigo-600">
-                  LOT #{lot.lot_number}
-                </p>
+              <p className="text-sm text-gray-500">
+                Lot #{lot.lot_number}
                 {isTemporaryNumber(lot.lot_number) && (
-                  <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-1 rounded">
-                    Temp (will sync)
-                  </span>
+                  <span className="ml-2 text-yellow-600">(Temporary)</span>
                 )}
-              </div>
+              </p>
             )}
           </div>
-          
-          {!isOnline && (
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-2">
-              <p className="text-sm text-yellow-800 font-medium">Offline Mode</p>
-              <p className="text-xs text-yellow-600">Changes will sync when online</p>
-            </div>
-          )}
         </div>
       </div>
 
-      {/* Photo Upload Input (Hidden) */}
-      <input
-        id="photo-upload"
-        type="file"
-        accept="image/*"
-        multiple
-        className="hidden"
-        onChange={handlePhotoUpload}
-      />
-
-      {/* Main Form */}
-      <div className="bg-white rounded-lg shadow border border-gray-200 p-6 space-y-6">
-        {/* Photos Section */}
-        <div>
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Photos</h2>
-          
-          {photos.length === 0 ? (
-            <div className="border-2 border-dashed border-gray-300 rounded-lg p-12 text-center">
-              <ImageIcon className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-              <p className="text-gray-600 mb-2">No photos yet</p>
-              <p className="text-sm text-gray-500">Use the buttons at the bottom to add photos</p>
-              <p className="text-xs text-indigo-600 mt-2 font-medium">📸 Camera photos are saved to your device gallery</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-              {photos.map((photo) => (
-                <div key={photo.id} className="relative group">
-                  <div className="aspect-square bg-gray-100 rounded-lg overflow-hidden">
-                    <img
-                      src={photoUrls[photo.id]}
-                      alt={photo.file_name}
-                      className="w-full h-full object-cover"
-                    />
-                  </div>
-                  
-                  {/* Photo Actions */}
-                  <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    {!photo.is_primary && (
-                      <button
-                        onClick={() => handleSetPrimaryPhoto(photo.id)}
-                        className="p-1 bg-white rounded-full shadow hover:bg-gray-100"
-                        title="Set as primary"
-                      >
-                        <Star className="w-4 h-4 text-gray-600" />
-                      </button>
-                    )}
-                    <button
-                      onClick={() => handleDeletePhoto(photo.id, photo.file_path)}
-                      className="p-1 bg-white rounded-full shadow hover:bg-red-50"
-                      title="Delete photo"
-                    >
-                      <X className="w-4 h-4 text-red-600" />
-                    </button>
-                  </div>
-
-                  {/* Primary Badge */}
-                  {photo.is_primary && (
-                    <div className="absolute top-2 left-2">
-                      <div className="bg-indigo-600 text-white text-xs px-2 py-1 rounded flex items-center gap-1">
-                        <Star className="w-3 h-3 fill-current" />
-                        Primary
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Unsynced indicator */}
-                  {!photo.synced && !isOnline && (
-                    <div className="absolute bottom-2 left-2">
-                      <div className="bg-yellow-500 text-white text-xs px-2 py-1 rounded">
-                        Offline
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
+      {/* Photos Section */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-gray-900">Photos</h2>
+          <div className="text-sm text-gray-500">
+            {photos.length} photo{photos.length !== 1 ? 's' : ''}
+          </div>
         </div>
 
-        {/* Basic Info */}
-        <div className="space-y-4">
-          <h2 className="text-lg font-semibold text-gray-900">Basic Information</h2>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="md:col-span-2">
+        {/* Photo Grid */}
+        {photos.length === 0 ? (
+          <div className="text-center py-12 text-gray-500 border-2 border-dashed border-gray-300 rounded-lg">
+            <ImageIcon className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+            <p className="text-sm mb-2">No photos yet</p>
+            <p className="text-xs text-gray-400">
+              Use the Camera or Upload button to add photos
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+            {photos.map((photo) => (
+              <div
+                key={photo.id}
+                className="relative group aspect-square rounded-lg overflow-hidden bg-gray-100"
+              >
+                {photoUrls[photo.id] ? (
+                  <img
+                    src={photoUrls[photo.id]}
+                    alt={photo.file_name}
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600" />
+                  </div>
+                )}
+
+                {/* Primary Badge */}
+                {photo.is_primary && (
+                  <div className="absolute top-2 left-2 bg-indigo-600 text-white px-2 py-1 rounded text-xs font-medium">
+                    Primary
+                  </div>
+                )}
+
+                {/* Action Buttons */}
+                <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  {!photo.is_primary && (
+                    <button
+                      onClick={() => handleSetPrimary(photo)}
+                      className="p-1.5 bg-white rounded-full hover:bg-yellow-50 transition-colors shadow-sm"
+                      title="Set as primary"
+                    >
+                      <Star className="w-4 h-4 text-yellow-400" />
+                    </button>
+                  )}
+                  <button
+                    onClick={() => handleDeletePhoto(photo)}
+                    className="p-1.5 bg-white rounded-full hover:bg-red-50 transition-colors shadow-sm"
+                    title="Delete photo"
+                  >
+                    <Trash2 className="w-4 h-4 text-red-600" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Form Fields */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <div className="space-y-6">
+          {/* Basic Information */}
+          <div className="space-y-4">
+            <h2 className="text-lg font-semibold text-gray-900">Basic Information</h2>
+            
+            <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Item Name * (max 100 characters)
+                Item Name *
               </label>
               <input
                 type="text"
                 value={lot.name || ''}
-                onChange={(e) => setLot({ ...lot, name: e.target.value.slice(0, 100) })}
-                onBlur={(e) => setLot({ ...lot, name: toTitleCase(e.target.value.slice(0, 100)) })}
+                onChange={(e) => setLot({ ...lot, name: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                placeholder="e.g., Victorian Walnut Dresser"
-                maxLength={100}
+                placeholder="e.g., Victorian Mahogany Dresser"
+                required
               />
             </div>
 
-            <div className="md:col-span-2">
+            <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Description
               </label>
@@ -803,256 +686,254 @@ export default function LotDetail() {
               />
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Quantity
-              </label>
-              <input
-                type="number"
-                value={lot.quantity || 1}
-                onChange={(e) => setLot({ ...lot, quantity: parseInt(e.target.value) || 1 })}
-                min="1"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
-              />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Quantity
+                </label>
+                <input
+                  type="number"
+                  value={lot.quantity || 1}
+                  onChange={(e) => setLot({ ...lot, quantity: parseInt(e.target.value) || 1 })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  min="1"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Condition
+                </label>
+                <input
+                  type="text"
+                  value={lot.condition || ''}
+                  onChange={(e) => setLot({ ...lot, condition: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  placeholder="e.g., Excellent, Good, Fair"
+                />
+              </div>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Condition
-              </label>
-              <select
-                value={lot.condition || ''}
-                onChange={(e) => setLot({ ...lot, condition: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
-              >
-                <option value="">Select condition...</option>
-                <option value="Excellent">Excellent</option>
-                <option value="Very Good">Very Good</option>
-                <option value="Good">Good</option>
-                <option value="Fair">Fair</option>
-                <option value="Poor">Poor</option>
-                <option value="As-Is">As-Is</option>
-              </select>
-            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Category
+                </label>
+                <input
+                  type="text"
+                  value={lot.category || ''}
+                  onChange={(e) => setLot({ ...lot, category: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  placeholder="e.g., Furniture, Art, Jewelry"
+                />
+              </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Category
-              </label>
-              <input
-                type="text"
-                value={lot.category || ''}
-                onChange={(e) => setLot({ ...lot, category: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                placeholder="e.g., Furniture, Art, Jewelry"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Style/Period
-              </label>
-              <input
-                type="text"
-                value={lot.style || ''}
-                onChange={(e) => setLot({ ...lot, style: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                placeholder="e.g., Victorian, Modern, Art Deco"
-              />
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Style/Period
+                </label>
+                <input
+                  type="text"
+                  value={lot.style || ''}
+                  onChange={(e) => setLot({ ...lot, style: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  placeholder="e.g., Victorian, Modern, Art Deco"
+                />
+              </div>
             </div>
           </div>
-        </div>
 
-        {/* Pricing */}
-        <div className="space-y-4">
-          <h2 className="text-lg font-semibold text-gray-900">Pricing</h2>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Low Estimate ($)
-              </label>
-              <input
-                type="number"
-                value={formatPrice(lot.estimate_low)}
-                onChange={(e) => setLot({ ...lot, estimate_low: parseFloat(e.target.value) || undefined })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                placeholder="100"
-              />
-            </div>
+          {/* Pricing */}
+          <div className="space-y-4">
+            <h2 className="text-lg font-semibold text-gray-900">Pricing</h2>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Low Estimate ($)
+                </label>
+                <input
+                  type="number"
+                  value={formatPrice(lot.estimate_low)}
+                  onChange={(e) => setLot({ ...lot, estimate_low: parseFloat(e.target.value) || undefined })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  placeholder="100"
+                />
+              </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                High Estimate ($)
-              </label>
-              <input
-                type="number"
-                value={formatPrice(lot.estimate_high)}
-                onChange={(e) => setLot({ ...lot, estimate_high: parseFloat(e.target.value) || undefined })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                placeholder="200"
-              />
-            </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  High Estimate ($)
+                </label>
+                <input
+                  type="number"
+                  value={formatPrice(lot.estimate_high)}
+                  onChange={(e) => setLot({ ...lot, estimate_high: parseFloat(e.target.value) || undefined })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  placeholder="200"
+                />
+              </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Starting Bid ($)
-              </label>
-              <input
-                type="number"
-                value={formatPrice(lot.starting_bid)}
-                onChange={(e) => setLot({ ...lot, starting_bid: parseFloat(e.target.value) || undefined })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                placeholder="50"
-              />
-            </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Starting Bid ($)
+                </label>
+                <input
+                  type="number"
+                  value={formatPrice(lot.starting_bid)}
+                  onChange={(e) => setLot({ ...lot, starting_bid: parseFloat(e.target.value) || undefined })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  placeholder="50"
+                />
+              </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Reserve Price ($)
-              </label>
-              <input
-                type="number"
-                value={formatPrice(lot.reserve_price)}
-                onChange={(e) => setLot({ ...lot, reserve_price: parseFloat(e.target.value) || undefined })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                placeholder="75"
-              />
-            </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Reserve Price ($)
+                </label>
+                <input
+                  type="number"
+                  value={formatPrice(lot.reserve_price)}
+                  onChange={(e) => setLot({ ...lot, reserve_price: parseFloat(e.target.value) || undefined })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  placeholder="75"
+                />
+              </div>
 
-            <div className="md:col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Buy Now Price ($)
-              </label>
-              <input
-                type="number"
-                value={formatPrice(lot.buy_now_price)}
-                onChange={(e) => setLot({ ...lot, buy_now_price: parseFloat(e.target.value) || undefined })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                placeholder="250"
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Dimensions */}
-        <div className="space-y-4">
-          <h2 className="text-lg font-semibold text-gray-900">Dimensions & Weight</h2>
-          
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Height (in)
-              </label>
-              <input
-                type="number"
-                value={formatPrice(lot.height)}
-                onChange={(e) => setLot({ ...lot, height: parseFloat(e.target.value) || undefined })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                placeholder="24"
-                step="0.1"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Width (in)
-              </label>
-              <input
-                type="number"
-                value={formatPrice(lot.width)}
-                onChange={(e) => setLot({ ...lot, width: parseFloat(e.target.value) || undefined })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                placeholder="36"
-                step="0.1"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Depth (in)
-              </label>
-              <input
-                type="number"
-                value={formatPrice(lot.depth)}
-                onChange={(e) => setLot({ ...lot, depth: parseFloat(e.target.value) || undefined })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                placeholder="18"
-                step="0.1"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Weight (lbs)
-              </label>
-              <input
-                type="number"
-                value={formatPrice(lot.weight)}
-                onChange={(e) => setLot({ ...lot, weight: parseFloat(e.target.value) || undefined })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                placeholder="50"
-                step="0.1"
-              />
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Buy Now Price ($)
+                </label>
+                <input
+                  type="number"
+                  value={formatPrice(lot.buy_now_price)}
+                  onChange={(e) => setLot({ ...lot, buy_now_price: parseFloat(e.target.value) || undefined })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  placeholder="250"
+                />
+              </div>
             </div>
           </div>
-        </div>
 
-        {/* Provenance */}
-        <div className="space-y-4">
-          <h2 className="text-lg font-semibold text-gray-900">Provenance</h2>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Origin
-              </label>
-              <input
-                type="text"
-                value={lot.origin || ''}
-                onChange={(e) => setLot({ ...lot, origin: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                placeholder="e.g., France, England, USA"
-              />
+          {/* Dimensions */}
+          <div className="space-y-4">
+            <h2 className="text-lg font-semibold text-gray-900">Dimensions & Weight</h2>
+            
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Height (in)
+                </label>
+                <input
+                  type="number"
+                  value={formatPrice(lot.height)}
+                  onChange={(e) => setLot({ ...lot, height: parseFloat(e.target.value) || undefined })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  placeholder="24"
+                  step="0.1"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Width (in)
+                </label>
+                <input
+                  type="number"
+                  value={formatPrice(lot.width)}
+                  onChange={(e) => setLot({ ...lot, width: parseFloat(e.target.value) || undefined })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  placeholder="36"
+                  step="0.1"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Depth (in)
+                </label>
+                <input
+                  type="number"
+                  value={formatPrice(lot.depth)}
+                  onChange={(e) => setLot({ ...lot, depth: parseFloat(e.target.value) || undefined })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  placeholder="18"
+                  step="0.1"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Weight (lbs)
+                </label>
+                <input
+                  type="number"
+                  value={formatPrice(lot.weight)}
+                  onChange={(e) => setLot({ ...lot, weight: parseFloat(e.target.value) || undefined })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  placeholder="50"
+                  step="0.1"
+                />
+              </div>
             </div>
+          </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Creator/Maker
-              </label>
-              <input
-                type="text"
-                value={lot.creator || ''}
-                onChange={(e) => setLot({ ...lot, creator: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                placeholder="e.g., John Smith, Unknown"
-              />
-            </div>
+          {/* Provenance */}
+          <div className="space-y-4">
+            <h2 className="text-lg font-semibold text-gray-900">Provenance</h2>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Origin
+                </label>
+                <input
+                  type="text"
+                  value={lot.origin || ''}
+                  onChange={(e) => setLot({ ...lot, origin: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  placeholder="e.g., France, England, USA"
+                />
+              </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Materials
-              </label>
-              <input
-                type="text"
-                value={lot.materials || ''}
-                onChange={(e) => setLot({ ...lot, materials: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                placeholder="e.g., Walnut, Oak, Bronze"
-              />
-            </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Creator/Maker
+                </label>
+                <input
+                  type="text"
+                  value={lot.creator || ''}
+                  onChange={(e) => setLot({ ...lot, creator: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  placeholder="e.g., John Smith, Unknown"
+                />
+              </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Consignor
-              </label>
-              <input
-                type="text"
-                value={lot.consignor || ''}
-                onChange={(e) => setLot({ ...lot, consignor: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                placeholder="Consignor name or reference"
-              />
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Materials
+                </label>
+                <input
+                  type="text"
+                  value={lot.materials || ''}
+                  onChange={(e) => setLot({ ...lot, materials: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  placeholder="e.g., Walnut, Oak, Bronze"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Consignor
+                </label>
+                <input
+                  type="text"
+                  value={lot.consignor || ''}
+                  onChange={(e) => setLot({ ...lot, consignor: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  placeholder="Consignor name or reference"
+                />
+              </div>
             </div>
           </div>
         </div>

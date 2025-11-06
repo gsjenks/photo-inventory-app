@@ -1,4 +1,5 @@
 // services/CameraService.ts
+// MOBILE-FIRST: Instant feedback, background processing
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 import type { Photo as CapacitorPhoto } from '@capacitor/camera';
 import { Capacitor } from '@capacitor/core';
@@ -13,6 +14,14 @@ interface CameraOptions {
   width?: number;
   height?: number;
   saveToGallery?: boolean;
+}
+
+interface InstantPhotoResult {
+  success: boolean;
+  photoId?: string;
+  blobUrl?: string;
+  photo?: CapacitorPhoto;
+  error?: string;
 }
 
 class CameraService {
@@ -39,7 +48,7 @@ class CameraService {
   async capturePhoto(options: CameraOptions = {}): Promise<CapacitorPhoto | null> {
     const {
       quality = 90,
-      allowEditing = true,
+      allowEditing = false,
       resultType = CameraResultType.Uri,
       correctOrientation = true,
       saveToGallery = true,
@@ -63,94 +72,24 @@ class CameraService {
     } catch (error: any) {
       if (error.message !== 'User cancelled photos app') {
         console.error('Camera capture error:', error);
-        alert('Unable to access camera. Please check permissions.');
       }
       return null;
     }
   }
 
-  async captureMultiplePhotos(count: number = 5): Promise<CapacitorPhoto[]> {
-    const photos: CapacitorPhoto[] = [];
-    
-    for (let i = 0; i < count; i++) {
-      const shouldContinue = confirm(
-        `Capture photo ${i + 1} of ${count}?\n(Cancel to finish early)`
-      );
-      
-      if (!shouldContinue) break;
-      
-      const photo = await this.capturePhoto();
-      if (photo) {
-        photos.push(photo);
-      } else {
-        break;
-      }
-    }
-    
-    return photos;
-  }
-
-  async selectFromGallery(multiple: boolean = false): Promise<CapacitorPhoto[]> {
-    try {
-      if (multiple && this.isNativePlatform()) {
-        const photos: CapacitorPhoto[] = [];
-        
-        while (true) {
-          const shouldContinue = photos.length === 0 || confirm(
-            `${photos.length} photo(s) selected. Add another?`
-          );
-          
-          if (!shouldContinue) break;
-          
-          const photo = await Camera.getPhoto({
-            quality: 90,
-            allowEditing: true,
-            resultType: CameraResultType.Uri,
-            source: CameraSource.Photos,
-            correctOrientation: true,
-          });
-          
-          if (photo) {
-            photos.push(photo);
-          } else {
-            break;
-          }
-        }
-        
-        return photos;
-      } else {
-        const photo = await Camera.getPhoto({
-          quality: 90,
-          allowEditing: true,
-          resultType: CameraResultType.Uri,
-          source: CameraSource.Photos,
-          correctOrientation: true,
-        });
-        
-        return photo ? [photo] : [];
-      }
-    } catch (error: any) {
-      if (error.message !== 'User cancelled photos app') {
-        console.error('Gallery selection error:', error);
-        alert('Unable to access photo gallery. Please check permissions.');
-      }
-      return [];
-    }
-  }
-
   /**
-   * OPTIMIZED: Capture and save - returns immediately
-   * Photo is saved to device gallery by camera
-   * Then queued for background processing (IndexedDB + Supabase)
+   * INSTANT FEEDBACK: Capture and return immediately with blob URL
+   * Background: Save to IndexedDB and Supabase
    */
-  async captureAndSave(
+  async captureAndSaveInstant(
     lotId: string,
     isPrimary: boolean = false
-  ): Promise<{ success: boolean; photoId?: string; error?: string }> {
+  ): Promise<InstantPhotoResult> {
     try {
+      // STEP 1: Capture photo with native gallery save
       const photo = await this.capturePhoto({
         quality: 90,
-        allowEditing: true,
+        allowEditing: false,
         saveToGallery: true,
       });
 
@@ -158,9 +97,25 @@ class CameraService {
         return { success: false, error: 'No photo captured' };
       }
 
-      return await this.savePhotoFast(photo, lotId, isPrimary);
+      // STEP 2: Create blob URL immediately for instant UI display
+      const blob = await this.photoToBlob(photo);
+      const blobUrl = URL.createObjectURL(blob);
+      const photoId = crypto.randomUUID();
+
+      // STEP 3: Return immediately - UI can display photo now
+      const result: InstantPhotoResult = {
+        success: true,
+        photoId,
+        blobUrl,
+        photo,
+      };
+
+      // STEP 4: Background processing - Save to IndexedDB and Supabase
+      this.savePhotoBackground(photoId, lotId, blob, photo, isPrimary);
+
+      return result;
     } catch (error) {
-      console.error('Error in captureAndSave:', error);
+      console.error('Error in captureAndSaveInstant:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to capture photo'
@@ -169,80 +124,58 @@ class CameraService {
   }
 
   /**
-   * FAST: Save photo using PhotoService's fast method
+   * Background photo save - Non-blocking
    */
-  private async savePhotoFast(
-    photo: CapacitorPhoto,
+  private async savePhotoBackground(
+    photoId: string,
     lotId: string,
-    isPrimary: boolean = false
-  ): Promise<{ success: boolean; photoId?: string; error?: string }> {
-    try {
-      const photoId = crypto.randomUUID();
-      const timestamp = Date.now();
-      const format = photo.format || 'jpeg';
-      const fileName = `${lotId}_${timestamp}.${format}`;
-      const filePath = `${lotId}/${fileName}`;
-
-      // Use PhotoService's fast save method
-      const result = await PhotoService.savePhotoFast(
-        photoId,
-        lotId,
-        photo,
-        filePath,
-        fileName,
-        isPrimary
-      );
-
-      if (result.success) {
-        return { success: true, photoId };
-      } else {
-        return { success: false, error: result.error };
-      }
-    } catch (error) {
-      console.error('Error saving photo fast:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to save photo'
-      };
-    }
-  }
-
-  /**
-   * LEGACY: Slow synchronous save (for web fallback)
-   */
-  async savePhoto(
+    blob: Blob,
     photo: CapacitorPhoto,
-    lotId: string,
-    isPrimary: boolean = false
-  ): Promise<{ success: boolean; photoId?: string; error?: string }> {
-    try {
-      const blob = await this.photoToBlob(photo);
-      const photoId = crypto.randomUUID();
-      const timestamp = Date.now();
-      const format = photo.format || 'jpeg';
-      const fileName = `${lotId}_${timestamp}.${format}`;
-      const filePath = `${lotId}/${fileName}`;
+    isPrimary: boolean
+  ): Promise<void> {
+    const timestamp = Date.now();
+    const format = photo.format || 'jpeg';
+    const fileName = `${lotId}_${timestamp}.${format}`;
+    const filePath = `${lotId}/${fileName}`;
 
-      const result = await PhotoService.savePhoto(
-        photoId,
-        lotId,
-        blob,
-        filePath,
-        fileName,
-        isPrimary
-      );
-
-      if (result.success) {
-        return { success: true, photoId };
-      } else {
-        return { success: false, error: result.error };
+    // Save to IndexedDB (fast)
+    setTimeout(async () => {
+      try {
+        await PhotoService.savePhoto(
+          photoId,
+          lotId,
+          blob,
+          filePath,
+          fileName,
+          isPrimary
+        );
+        console.log('✅ Photo saved to IndexedDB');
+      } catch (error) {
+        console.error('❌ IndexedDB save failed:', error);
       }
-    } catch (error) {
-      console.error('Error saving photo:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to save photo'
-      };
+    }, 100);
+
+    // Upload to Supabase if online (slower, background)
+    if (navigator.onLine) {
+      setTimeout(async () => {
+        try {
+          const uploadResult = await PhotoService.uploadToSupabase(blob, filePath);
+          if (uploadResult.success) {
+            await PhotoService.saveMetadataToSupabase({
+              id: photoId,
+              lot_id: lotId,
+              file_path: filePath,
+              file_name: fileName,
+              is_primary: isPrimary,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            });
+            console.log('✅ Photo synced to Supabase');
+          }
+        } catch (error) {
+          console.log('⏳ Supabase upload will retry later');
+        }
+      }, 2000);
     }
   }
 
@@ -276,138 +209,182 @@ class CameraService {
   }
 
   /**
-   * OPTIMIZED: Capture multiple photos with instant feedback
+   * INSTANT: Capture multiple photos with immediate feedback
    */
-  async captureMultipleAndSave(
+  async captureMultipleInstant(
     lotId: string,
     count: number = 5
-  ): Promise<{ 
-    success: number; 
-    failed: number; 
-    photoIds: string[];
-    errors: string[];
+  ): Promise<{
+    photos: Array<{ photoId: string; blobUrl: string }>;
+    success: number;
+    cancelled: boolean;
   }> {
-    const photoIds: string[] = [];
-    const errors: string[] = [];
+    const photos: Array<{ photoId: string; blobUrl: string }> = [];
     let success = 0;
-    let failed = 0;
 
     for (let i = 0; i < count; i++) {
       const shouldContinue = i === 0 || confirm(
-        `${success} photo(s) saved. Capture another? (${i + 1} of ${count})`
+        `${success} photo(s) captured. Take another? (${i + 1} of ${count})`
       );
       
-      if (!shouldContinue) break;
+      if (!shouldContinue) {
+        return { photos, success, cancelled: true };
+      }
       
-      const photo = await this.capturePhoto({
-        quality: 90,
-        allowEditing: true,
-        saveToGallery: true,
-      });
+      const result = await this.captureAndSaveInstant(
+        lotId,
+        photos.length === 0
+      );
       
-      if (!photo) {
+      if (result.success && result.photoId && result.blobUrl) {
+        photos.push({ photoId: result.photoId, blobUrl: result.blobUrl });
+        success++;
+      } else {
         break;
       }
-
-      const isPrimary = photoIds.length === 0;
-      const result = await this.savePhotoFast(photo, lotId, isPrimary);
-      
-      if (result.success && result.photoId) {
-        success++;
-        photoIds.push(result.photoId);
-      } else {
-        failed++;
-        errors.push(result.error || 'Unknown error');
-      }
     }
 
-    return { success, failed, photoIds, errors };
+    return { photos, success, cancelled: false };
   }
 
-  async selectMultipleAndSave(
-    lotId: string
-  ): Promise<{ 
-    success: number; 
-    failed: number; 
-    photoIds: string[];
-    errors: string[];
-  }> {
-    const photos = await this.selectFromGallery(true);
-    
-    if (photos.length === 0) {
-      return { success: 0, failed: 0, photoIds: [], errors: [] };
-    }
-
-    const photoIds: string[] = [];
-    const errors: string[] = [];
-    let success = 0;
-    let failed = 0;
-
-    for (let i = 0; i < photos.length; i++) {
-      const isPrimary = i === 0;
-      const result = await this.savePhotoFast(photos[i], lotId, isPrimary);
-      
-      if (result.success && result.photoId) {
-        success++;
-        photoIds.push(result.photoId);
+  async selectFromGallery(multiple: boolean = false): Promise<CapacitorPhoto[]> {
+    try {
+      if (multiple && this.isNativePlatform()) {
+        const photos: CapacitorPhoto[] = [];
+        
+        while (true) {
+          const shouldContinue = photos.length === 0 || confirm(
+            `${photos.length} photo(s) selected. Add another?`
+          );
+          
+          if (!shouldContinue) break;
+          
+          const photo = await Camera.getPhoto({
+            quality: 90,
+            allowEditing: false,
+            resultType: CameraResultType.Uri,
+            source: CameraSource.Photos,
+            correctOrientation: true,
+          });
+          
+          if (photo) {
+            photos.push(photo);
+          } else {
+            break;
+          }
+        }
+        
+        return photos;
       } else {
-        failed++;
-        errors.push(result.error || 'Unknown error');
+        const photo = await Camera.getPhoto({
+          quality: 90,
+          allowEditing: false,
+          resultType: CameraResultType.Uri,
+          source: CameraSource.Photos,
+          correctOrientation: true,
+        });
+        
+        return photo ? [photo] : [];
       }
+    } catch (error: any) {
+      if (error.message !== 'User cancelled photos app') {
+        console.error('Gallery selection error:', error);
+      }
+      return [];
+    }
+  }
+
+  /**
+   * INSTANT: Select and save from gallery
+   */
+  async selectAndSaveInstant(
+    lotId: string
+  ): Promise<{
+    photos: Array<{ photoId: string; blobUrl: string }>;
+    success: number;
+  }> {
+    const capacitorPhotos = await this.selectFromGallery(true);
+    
+    if (capacitorPhotos.length === 0) {
+      return { photos: [], success: 0 };
     }
 
-    return { success, failed, photoIds, errors };
+    const photos: Array<{ photoId: string; blobUrl: string }> = [];
+
+    for (let i = 0; i < capacitorPhotos.length; i++) {
+      const photo = capacitorPhotos[i];
+      const blob = await this.photoToBlob(photo);
+      const blobUrl = URL.createObjectURL(blob);
+      const photoId = crypto.randomUUID();
+      const isPrimary = i === 0;
+
+      photos.push({ photoId, blobUrl });
+
+      // Save in background
+      this.savePhotoBackground(photoId, lotId, blob, photo, isPrimary);
+    }
+
+    return { photos, success: photos.length };
   }
 
   async handleFileInput(files: FileList | null, lotId: string): Promise<{
+    photos: Array<{ photoId: string; blobUrl: string }>;
     success: number;
-    failed: number;
-    photoIds: string[];
-    errors: string[];
   }> {
     if (!files || files.length === 0) {
-      return { success: 0, failed: 0, photoIds: [], errors: [] };
+      return { photos: [], success: 0 };
     }
 
-    const photoIds: string[] = [];
-    const errors: string[] = [];
-    let success = 0;
-    let failed = 0;
+    const photos: Array<{ photoId: string; blobUrl: string }> = [];
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
+      const blobUrl = URL.createObjectURL(file);
+      const photoId = crypto.randomUUID();
       const isPrimary = i === 0;
       
-      try {
-        const photoId = crypto.randomUUID();
-        const timestamp = Date.now();
-        const fileExt = file.name.split('.').pop() || 'jpg';
-        const fileName = `${lotId}_${timestamp}.${fileExt}`;
-        const filePath = `${lotId}/${fileName}`;
+      photos.push({ photoId, blobUrl });
 
-        const result = await PhotoService.savePhoto(
-          photoId,
-          lotId,
-          file,
-          filePath,
-          fileName,
-          isPrimary
-        );
+      // Save in background
+      const timestamp = Date.now();
+      const fileExt = file.name.split('.').pop() || 'jpg';
+      const fileName = `${lotId}_${timestamp}.${fileExt}`;
+      const filePath = `${lotId}/${fileName}`;
 
-        if (result.success) {
-          success++;
-          photoIds.push(photoId);
-        } else {
-          failed++;
-          errors.push(result.error || 'Unknown error');
+      setTimeout(async () => {
+        try {
+          await PhotoService.savePhoto(
+            photoId,
+            lotId,
+            file,
+            filePath,
+            fileName,
+            isPrimary
+          );
+          
+          if (navigator.onLine) {
+            setTimeout(async () => {
+              const uploadResult = await PhotoService.uploadToSupabase(file, filePath);
+              if (uploadResult.success) {
+                await PhotoService.saveMetadataToSupabase({
+                  id: photoId,
+                  lot_id: lotId,
+                  file_path: filePath,
+                  file_name: fileName,
+                  is_primary: isPrimary,
+                  created_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString(),
+                });
+              }
+            }, 2000);
+          }
+        } catch (error) {
+          console.error('Background save failed:', error);
         }
-      } catch (error) {
-        failed++;
-        errors.push(error instanceof Error ? error.message : 'Unknown error');
-      }
+      }, 100);
     }
 
-    return { success, failed, photoIds, errors };
+    return { photos, success: photos.length };
   }
 
   async requestPermissions(): Promise<boolean> {
