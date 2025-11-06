@@ -1,6 +1,4 @@
 // services/CameraService.ts
-// Native Camera Service with device gallery saving (mobile-first)
-
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 import type { Photo as CapacitorPhoto } from '@capacitor/camera';
 import { Capacitor } from '@capacitor/core';
@@ -18,16 +16,10 @@ interface CameraOptions {
 }
 
 class CameraService {
-  /**
-   * Check if running on native platform (iOS/Android)
-   */
   isNativePlatform(): boolean {
     return Capacitor.isNativePlatform();
   }
 
-  /**
-   * Check if device has camera capabilities
-   */
   async hasCamera(): Promise<boolean> {
     if (this.isNativePlatform()) {
       return true;
@@ -44,17 +36,13 @@ class CameraService {
     return false;
   }
 
-  /**
-   * Capture photo using native camera
-   * MOBILE-FIRST: Automatically saves to device gallery
-   */
   async capturePhoto(options: CameraOptions = {}): Promise<CapacitorPhoto | null> {
     const {
       quality = 90,
       allowEditing = true,
       resultType = CameraResultType.Uri,
       correctOrientation = true,
-      saveToGallery = true, // CRITICAL: Save to device gallery
+      saveToGallery = true,
       width,
       height,
     } = options;
@@ -66,7 +54,7 @@ class CameraService {
         resultType,
         source: CameraSource.Camera,
         correctOrientation,
-        saveToGallery, // Photo will be saved to device gallery
+        saveToGallery,
         width,
         height,
       });
@@ -81,9 +69,6 @@ class CameraService {
     }
   }
 
-  /**
-   * Capture multiple photos sequentially
-   */
   async captureMultiplePhotos(count: number = 5): Promise<CapacitorPhoto[]> {
     const photos: CapacitorPhoto[] = [];
     
@@ -105,9 +90,6 @@ class CameraService {
     return photos;
   }
 
-  /**
-   * Select photo(s) from gallery
-   */
   async selectFromGallery(multiple: boolean = false): Promise<CapacitorPhoto[]> {
     try {
       if (multiple && this.isNativePlatform()) {
@@ -157,61 +139,26 @@ class CameraService {
   }
 
   /**
-   * Convert Capacitor Photo to Blob
-   */
-  async photoToBlob(photo: CapacitorPhoto): Promise<Blob> {
-    if (photo.base64String) {
-      return this.base64ToBlob(photo.base64String, photo.format || 'jpeg');
-    }
-    
-    if (photo.webPath) {
-      const response = await fetch(photo.webPath);
-      return await response.blob();
-    }
-    
-    if (photo.path) {
-      throw new Error('Cannot convert file path to blob without Filesystem plugin');
-    }
-    
-    throw new Error('No valid photo data found');
-  }
-
-  /**
-   * Convert base64 to Blob
-   */
-  private base64ToBlob(base64: string, format: string): Blob {
-    const byteString = atob(base64);
-    const arrayBuffer = new ArrayBuffer(byteString.length);
-    const uint8Array = new Uint8Array(arrayBuffer);
-    
-    for (let i = 0; i < byteString.length; i++) {
-      uint8Array[i] = byteString.charCodeAt(i);
-    }
-    
-    return new Blob([arrayBuffer], { type: `image/${format}` });
-  }
-
-  /**
-   * MOBILE-FIRST: Capture photo and save to device gallery + IndexedDB + Supabase (if online)
+   * OPTIMIZED: Capture and save - returns immediately
+   * Photo is saved to device gallery by camera
+   * Then queued for background processing (IndexedDB + Supabase)
    */
   async captureAndSave(
     lotId: string,
     isPrimary: boolean = false
   ): Promise<{ success: boolean; photoId?: string; error?: string }> {
     try {
-      // Step 1: Capture photo with native camera (saves to device gallery automatically)
       const photo = await this.capturePhoto({
         quality: 90,
         allowEditing: true,
-        saveToGallery: true, // MOBILE-FIRST: Save to device gallery
+        saveToGallery: true,
       });
 
       if (!photo) {
         return { success: false, error: 'No photo captured' };
       }
 
-      // Step 2: Save to IndexedDB and queue for Supabase upload
-      return await this.savePhoto(photo, lotId, isPrimary);
+      return await this.savePhotoFast(photo, lotId, isPrimary);
     } catch (error) {
       console.error('Error in captureAndSave:', error);
       return {
@@ -222,8 +169,43 @@ class CameraService {
   }
 
   /**
-   * Save a Capacitor Photo to IndexedDB and queue for Supabase
-   * Photo is already saved to device gallery from camera capture
+   * FAST: Queue photo for background processing and return immediately
+   */
+  private async savePhotoFast(
+    photo: CapacitorPhoto,
+    lotId: string,
+    isPrimary: boolean = false
+  ): Promise<{ success: boolean; photoId?: string; error?: string }> {
+    try {
+      const photoId = crypto.randomUUID();
+      const timestamp = Date.now();
+      const format = photo.format || 'jpeg';
+      const fileName = `${lotId}_${timestamp}.${format}`;
+      const filePath = `${lotId}/${fileName}`;
+
+      // Queue for background processing - DOES NOT BLOCK
+      PhotoService.queuePhotoForProcessing(
+        photoId,
+        lotId,
+        photo,
+        filePath,
+        fileName,
+        isPrimary
+      );
+
+      // Return immediately
+      return { success: true, photoId };
+    } catch (error) {
+      console.error('Error queueing photo:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to queue photo'
+      };
+    }
+  }
+
+  /**
+   * LEGACY: Slow synchronous save (for web fallback)
    */
   async savePhoto(
     photo: CapacitorPhoto,
@@ -231,17 +213,13 @@ class CameraService {
     isPrimary: boolean = false
   ): Promise<{ success: boolean; photoId?: string; error?: string }> {
     try {
-      // Convert photo to blob
       const blob = await this.photoToBlob(photo);
-
-      // Generate photo ID and file path
       const photoId = crypto.randomUUID();
       const timestamp = Date.now();
       const format = photo.format || 'jpeg';
       const fileName = `${lotId}_${timestamp}.${format}`;
       const filePath = `${lotId}/${fileName}`;
 
-      // Save to IndexedDB (offline-first)
       const result = await PhotoService.savePhoto(
         photoId,
         lotId,
@@ -265,8 +243,37 @@ class CameraService {
     }
   }
 
+  async photoToBlob(photo: CapacitorPhoto): Promise<Blob> {
+    if (photo.base64String) {
+      return this.base64ToBlob(photo.base64String, photo.format || 'jpeg');
+    }
+    
+    if (photo.webPath) {
+      const response = await fetch(photo.webPath);
+      return await response.blob();
+    }
+    
+    if (photo.path) {
+      throw new Error('Cannot convert file path to blob without Filesystem plugin');
+    }
+    
+    throw new Error('No valid photo data found');
+  }
+
+  private base64ToBlob(base64: string, format: string): Blob {
+    const byteString = atob(base64);
+    const arrayBuffer = new ArrayBuffer(byteString.length);
+    const uint8Array = new Uint8Array(arrayBuffer);
+    
+    for (let i = 0; i < byteString.length; i++) {
+      uint8Array[i] = byteString.charCodeAt(i);
+    }
+    
+    return new Blob([arrayBuffer], { type: `image/${format}` });
+  }
+
   /**
-   * Capture multiple photos and save them (all saved to device gallery)
+   * OPTIMIZED: Capture multiple photos with instant feedback
    */
   async captureMultipleAndSave(
     lotId: string,
@@ -289,7 +296,6 @@ class CameraService {
       
       if (!shouldContinue) break;
       
-      // Each photo is saved to device gallery during capture
       const photo = await this.capturePhoto({
         quality: 90,
         allowEditing: true,
@@ -301,7 +307,7 @@ class CameraService {
       }
 
       const isPrimary = photoIds.length === 0;
-      const result = await this.savePhoto(photo, lotId, isPrimary);
+      const result = await this.savePhotoFast(photo, lotId, isPrimary);
       
       if (result.success && result.photoId) {
         success++;
@@ -315,9 +321,6 @@ class CameraService {
     return { success, failed, photoIds, errors };
   }
 
-  /**
-   * Select multiple photos from gallery and save them
-   */
   async selectMultipleAndSave(
     lotId: string
   ): Promise<{ 
@@ -339,7 +342,7 @@ class CameraService {
 
     for (let i = 0; i < photos.length; i++) {
       const isPrimary = i === 0;
-      const result = await this.savePhoto(photos[i], lotId, isPrimary);
+      const result = await this.savePhotoFast(photos[i], lotId, isPrimary);
       
       if (result.success && result.photoId) {
         success++;
@@ -353,9 +356,6 @@ class CameraService {
     return { success, failed, photoIds, errors };
   }
 
-  /**
-   * Web fallback: Handle file input selection
-   */
   async handleFileInput(files: FileList | null, lotId: string): Promise<{
     success: number;
     failed: number;
@@ -407,9 +407,6 @@ class CameraService {
     return { success, failed, photoIds, errors };
   }
 
-  /**
-   * Request camera permissions
-   */
   async requestPermissions(): Promise<boolean> {
     try {
       const permissions = await Camera.requestPermissions();
@@ -420,9 +417,6 @@ class CameraService {
     }
   }
 
-  /**
-   * Check camera permissions
-   */
   async checkPermissions(): Promise<boolean> {
     try {
       const permissions = await Camera.checkPermissions();

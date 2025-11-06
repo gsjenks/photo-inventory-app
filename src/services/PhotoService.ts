@@ -1,6 +1,7 @@
 // services/PhotoService.ts
 import offlineStorage from './Offlinestorage';
 import { supabase } from '../lib/supabase';
+import ConnectivityService from './ConnectivityService';
 
 interface PhotoMetadata {
   id: string;
@@ -12,68 +13,191 @@ interface PhotoMetadata {
   updated_at: string;
 }
 
+interface PhotoQueueItem {
+  photoId: string;
+  lotId: string;
+  photoData: any;
+  filePath: string;
+  fileName: string;
+  isPrimary: boolean;
+  timestamp: number;
+}
+
 class PhotoService {
   private dbReady: Promise<void>;
+  private processingQueue: PhotoQueueItem[] = [];
+  private isProcessing = false;
 
   constructor() {
-    // Initialize database on service creation to prevent "object store not found" errors
     this.dbReady = offlineStorage.initialize().catch(error => {
       console.error('PhotoService: Failed to initialize database:', error);
       throw error;
     });
   }
 
-  /**
-   * Ensure database is ready before performing operations
-   */
   private async ensureReady(): Promise<void> {
     await this.dbReady;
   }
 
-  /**
-   * Save photo blob to IndexedDB
-   */
   async savePhotoBlob(photoId: string, blob: Blob): Promise<void> {
     await this.ensureReady();
     await offlineStorage.upsertPhotoBlob(photoId, blob);
   }
 
-  /**
-   * Get photo blob from IndexedDB
-   */
   async getPhotoBlob(photoId: string): Promise<Blob | undefined> {
     await this.ensureReady();
     return await offlineStorage.getPhotoBlob(photoId);
   }
 
-  /**
-   * Save photo metadata to IndexedDB
-   */
   async savePhotoMetadata(photo: PhotoMetadata): Promise<void> {
     await this.ensureReady();
     await offlineStorage.upsertPhoto({
       ...photo,
-      synced: false, // Mark as unsynced initially
+      synced: false,
     });
   }
 
-  /**
-   * Get all photos for a lot from IndexedDB
-   */
   async getPhotosByLot(lotId: string): Promise<any[]> {
     await this.ensureReady();
     return await offlineStorage.getPhotosByLot(lotId);
   }
 
-  /**
-   * Alias for getPhotosByLot - for backwards compatibility
-   */
   async getPhotosForLot(lotId: string): Promise<any[]> {
     return this.getPhotosByLot(lotId);
   }
 
   /**
-   * Save photo (metadata and blob) - high-level method
+   * FAST: Queue photo for background processing
+   * Returns immediately without blocking
+   */
+  queuePhotoForProcessing(
+    photoId: string,
+    lotId: string,
+    photoData: any,
+    filePath: string,
+    fileName: string,
+    isPrimary: boolean = false
+  ): void {
+    this.processingQueue.push({
+      photoId,
+      lotId,
+      photoData,
+      filePath,
+      fileName,
+      isPrimary,
+      timestamp: Date.now(),
+    });
+
+    // Start processing if not already running
+    if (!this.isProcessing) {
+      this.processQueue();
+    }
+  }
+
+  /**
+   * Background processor - runs async without blocking UI
+   */
+  private async processQueue(): Promise<void> {
+    if (this.isProcessing || this.processingQueue.length === 0) {
+      return;
+    }
+
+    this.isProcessing = true;
+
+    while (this.processingQueue.length > 0) {
+      const item = this.processingQueue.shift();
+      if (!item) continue;
+
+      try {
+        // Convert to blob
+        const blob = await this.convertToBlob(item.photoData);
+
+        // Save to IndexedDB
+        await this.savePhotoBlob(item.photoId, blob);
+
+        const metadata: PhotoMetadata = {
+          id: item.photoId,
+          lot_id: item.lotId,
+          file_path: item.filePath,
+          file_name: item.fileName,
+          is_primary: item.isPrimary,
+          created_at: new Date(item.timestamp).toISOString(),
+          updated_at: new Date(item.timestamp).toISOString(),
+        };
+
+        await this.savePhotoMetadata(metadata);
+
+        // If online, sync to Supabase in background
+        if (ConnectivityService.getConnectionStatus()) {
+          this.syncPhotoToSupabase(item.photoId, blob, item.filePath, metadata).catch(err => {
+            console.log('Background sync will retry later:', err.message);
+          });
+        }
+      } catch (error) {
+        console.error('Error processing photo queue item:', error);
+      }
+    }
+
+    this.isProcessing = false;
+  }
+
+  /**
+   * Convert photo data to blob
+   */
+  private async convertToBlob(photoData: any): Promise<Blob> {
+    // Base64
+    if (photoData.base64String) {
+      return this.base64ToBlob(photoData.base64String, photoData.format || 'jpeg');
+    }
+    
+    // Web path (file:// or blob:)
+    if (photoData.webPath) {
+      const response = await fetch(photoData.webPath);
+      return await response.blob();
+    }
+
+    // Already a Blob or File
+    if (photoData instanceof Blob) {
+      return photoData;
+    }
+    
+    throw new Error('Cannot convert photo data to blob');
+  }
+
+  private base64ToBlob(base64: string, format: string): Blob {
+    const byteString = atob(base64);
+    const arrayBuffer = new ArrayBuffer(byteString.length);
+    const uint8Array = new Uint8Array(arrayBuffer);
+    
+    for (let i = 0; i < byteString.length; i++) {
+      uint8Array[i] = byteString.charCodeAt(i);
+    }
+    
+    return new Blob([arrayBuffer], { type: `image/${format}` });
+  }
+
+  /**
+   * Background sync single photo to Supabase
+   */
+  private async syncPhotoToSupabase(
+    photoId: string,
+    blob: Blob,
+    filePath: string,
+    metadata: PhotoMetadata
+  ): Promise<void> {
+    const uploadResult = await this.uploadToSupabase(blob, filePath);
+    if (!uploadResult.success) {
+      throw new Error(uploadResult.error);
+    }
+
+    const saved = await this.saveMetadataToSupabase(metadata);
+    if (!saved) {
+      throw new Error('Failed to save metadata');
+    }
+  }
+
+  /**
+   * LEGACY: Synchronous save (kept for compatibility)
    */
   async savePhoto(
     photoId: string,
@@ -85,11 +209,8 @@ class PhotoService {
   ): Promise<{ success: boolean; error?: string }> {
     try {
       await this.ensureReady();
-
-      // Save blob
       await this.savePhotoBlob(photoId, blob);
 
-      // Save metadata
       const metadata: PhotoMetadata = {
         id: photoId,
         lot_id: lotId,
@@ -101,7 +222,6 @@ class PhotoService {
       };
 
       await this.savePhotoMetadata(metadata);
-
       return { success: true };
     } catch (error) {
       console.error('Failed to save photo:', error);
@@ -112,18 +232,12 @@ class PhotoService {
     }
   }
 
-  /**
-   * Delete photo from IndexedDB
-   */
   async deletePhoto(photoId: string): Promise<void> {
     await this.ensureReady();
     await offlineStorage.deletePhoto(photoId);
     await offlineStorage.deletePhotoBlob(photoId);
   }
 
-  /**
-   * Upload photo to Supabase Storage (when online)
-   */
   async uploadToSupabase(
     blob: Blob,
     filePath: string
@@ -137,18 +251,15 @@ class PhotoService {
         });
 
       if (error) {
-        console.error('Supabase upload error:', error);
         return { success: false, error: error.message };
       }
 
-      // Get public URL
       const { data: urlData } = supabase.storage
         .from('photos')
         .getPublicUrl(filePath);
 
       return { success: true, url: urlData.publicUrl };
     } catch (error) {
-      console.error('Upload exception:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Upload failed',
@@ -156,30 +267,21 @@ class PhotoService {
     }
   }
 
-  /**
-   * Save photo metadata to Supabase database (when online)
-   */
   async saveMetadataToSupabase(photo: PhotoMetadata): Promise<boolean> {
     try {
       const { error } = await supabase.from('photos').upsert(photo);
 
       if (error) {
-        console.error('Failed to save photo metadata to Supabase:', error);
         return false;
       }
 
-      // Mark as synced in IndexedDB
       await offlineStorage.upsertPhoto({ ...photo, synced: true });
       return true;
     } catch (error) {
-      console.error('Save metadata exception:', error);
       return false;
     }
   }
 
-  /**
-   * Get object URL for displaying photo from blob
-   */
   async getPhotoObjectUrl(photoId: string): Promise<string | null> {
     await this.ensureReady();
     const blob = await this.getPhotoBlob(photoId);
@@ -189,9 +291,6 @@ class PhotoService {
     return null;
   }
 
-  /**
-   * Convert data URL to Blob
-   */
   dataURLtoBlob(dataUrl: string): Blob {
     const arr = dataUrl.split(',');
     const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
@@ -204,39 +303,27 @@ class PhotoService {
     return new Blob([u8arr], { type: mime });
   }
 
-  /**
-   * Cleanup object URLs to prevent memory leaks
-   */
   revokeObjectUrl(url: string): void {
     if (url.startsWith('blob:')) {
       URL.revokeObjectURL(url);
     }
   }
 
-  /**
-   * Set photo as primary
-   */
   async setPrimaryPhoto(lotId: string, photoId: string): Promise<void> {
     await this.ensureReady();
-    
-    // Get all photos for the lot
     const photos = await this.getPhotosByLot(lotId);
     
-    // Update all photos - set new primary and unset others
     for (const photo of photos) {
       const updatedPhoto = {
         ...photo,
         is_primary: photo.id === photoId,
         updated_at: new Date().toISOString(),
-        synced: false, // Mark as needing sync
+        synced: false,
       };
       await offlineStorage.upsertPhoto(updatedPhoto);
     }
   }
 
-  /**
-   * Sync unsynced photos to Supabase
-   */
   async syncPhotos(lotId?: string): Promise<{ success: number; failed: number }> {
     await this.ensureReady();
     
@@ -253,23 +340,18 @@ class PhotoService {
 
     for (const photo of photos) {
       try {
-        // Get blob
         const blob = await this.getPhotoBlob(photo.id);
         if (!blob) {
-          console.warn(`No blob found for photo ${photo.id}`);
           failed++;
           continue;
         }
 
-        // Upload to Supabase
         const uploadResult = await this.uploadToSupabase(blob, photo.file_path);
         if (!uploadResult.success) {
-          console.error(`Failed to upload photo ${photo.id}:`, uploadResult.error);
           failed++;
           continue;
         }
 
-        // Save metadata to Supabase
         const metadataSaved = await this.saveMetadataToSupabase(photo);
         if (metadataSaved) {
           success++;
@@ -277,7 +359,6 @@ class PhotoService {
           failed++;
         }
       } catch (error) {
-        console.error(`Error syncing photo ${photo.id}:`, error);
         failed++;
       }
     }
@@ -285,21 +366,16 @@ class PhotoService {
     return { success, failed };
   }
 
-  /**
-   * Download photos for a lot from Supabase to IndexedDB
-   */
   async downloadPhotosForLot(lotId: string): Promise<{ success: number; failed: number }> {
     try {
       await this.ensureReady();
 
-      // Get photo metadata from Supabase
       const { data: photos, error } = await supabase
         .from('photos')
         .select('*')
         .eq('lot_id', lotId);
 
       if (error) {
-        console.error('Failed to fetch photos from Supabase:', error);
         return { success: 0, failed: 0 };
       }
 
@@ -312,30 +388,25 @@ class PhotoService {
 
       for (const photo of photos) {
         try {
-          // Download blob from Supabase Storage
           const { data: blob, error: downloadError } = await supabase.storage
             .from('photos')
             .download(photo.file_path);
 
           if (downloadError || !blob) {
-            console.error(`Failed to download photo ${photo.id}:`, downloadError);
             failed++;
             continue;
           }
 
-          // Save to IndexedDB
           await this.savePhotoBlob(photo.id, blob);
           await offlineStorage.upsertPhoto({ ...photo, synced: true });
           success++;
         } catch (error) {
-          console.error(`Error downloading photo ${photo.id}:`, error);
           failed++;
         }
       }
 
       return { success, failed };
     } catch (error) {
-      console.error('Error in downloadPhotosForLot:', error);
       return { success: 0, failed: 0 };
     }
   }
