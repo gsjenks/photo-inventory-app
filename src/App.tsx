@@ -14,27 +14,37 @@ import SyncService from './services/SyncService';
 import { RefreshCw } from 'lucide-react';
 
 function AppContent() {
-  const { user, loading, currentCompany } = useApp();
+  const { user, loading, currentCompany, companySwitched, setCompanySwitched } = useApp();
   const [syncing, setSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState({ stage: '', current: 0, total: 0 });
   const [syncComplete, setSyncComplete] = useState(false);
 
-  // Initial sync when app opens with user and company
+  // Sync on initial load or company switch
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
 
-    const performInitialSync = async () => {
-      if (!user || !currentCompany || syncComplete) return;
+    const performSync = async () => {
+      // Skip if no user or company
+      if (!user || !currentCompany) return;
+
+      // Skip if already synced and company hasn't changed
+      if (syncComplete && !companySwitched) return;
 
       const isOnline = ConnectivityService.getConnectionStatus();
       if (!isOnline) {
-        console.log('📴 App opened offline - skipping initial sync');
+        console.log('🔴 Offline - skipping sync');
         setSyncComplete(true);
+        setCompanySwitched(false);
         return;
       }
 
       try {
-        console.log('🚀 App opened - starting initial sync for active sales...');
+        if (companySwitched) {
+          console.log(`🔄 Company switched to: ${currentCompany.name}`);
+        } else {
+          console.log('🚀 App opened - starting initial sync...');
+        }
+
         setSyncing(true);
 
         // Subscribe to progress updates
@@ -42,15 +52,17 @@ function AppContent() {
           setSyncProgress(progress);
         });
 
-        // Perform initial sync for active sales only
+        // Perform priority sync for active sales
         await SyncService.performInitialSync(currentCompany.id);
 
-        console.log('✅ Initial sync complete');
+        console.log('✅ Sync complete');
         setSyncComplete(true);
+        setCompanySwitched(false);
       } catch (error) {
-        console.error('❌ Initial sync failed:', error);
+        console.error('❌ Sync failed:', error);
         // Don't block app usage if sync fails
         setSyncComplete(true);
+        setCompanySwitched(false);
       } finally {
         setSyncing(false);
         if (unsubscribe) {
@@ -59,14 +71,14 @@ function AppContent() {
       }
     };
 
-    performInitialSync();
+    performSync();
 
     return () => {
       if (unsubscribe) {
         unsubscribe();
       }
     };
-  }, [user, currentCompany]);
+  }, [user, currentCompany, companySwitched]);
 
   if (loading) {
     return (
@@ -93,9 +105,13 @@ function AppContent() {
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center max-w-md mx-auto px-6">
           <RefreshCw className="w-16 h-16 text-indigo-600 mx-auto mb-6 animate-spin" />
-          <h2 className="text-2xl font-bold text-gray-900 mb-2">Syncing Data</h2>
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">
+            {companySwitched ? 'Switching Company' : 'Syncing Data'}
+          </h2>
           <p className="text-gray-600 mb-6">
-            Updating active sales and photos from the cloud...
+            {companySwitched 
+              ? `Loading data for ${currentCompany.name}...`
+              : 'Updating active sales and photos from the cloud...'}
           </p>
           
           {/* Progress indicator */}
@@ -115,7 +131,9 @@ function AppContent() {
           )}
 
           <p className="text-xs text-gray-500 mt-4">
-            This only happens once when you open the app
+            {companySwitched 
+              ? 'Syncing active sales first, remaining data in background'
+              : 'This only happens when you open the app or switch companies'}
           </p>
         </div>
       </div>

@@ -31,48 +31,88 @@ class SyncService {
   }
 
   /**
-   * Initial sync when app opens - syncs active sales only
+   * PRIORITY SYNC: Active sales first (blocking with progress)
+   * Step 1: Company data
+   * Step 2: Active sales
+   * Step 3: Active sales lots
+   * Step 4: Active sales photos metadata
+   * Background: Photo blobs, remaining data
    */
   async performInitialSync(companyId: string): Promise<void> {
     if (this.isSyncing) {
-      console.log('Sync already in progress');
+      console.log('⏸️ Sync already in progress');
       return;
     }
 
     this.isSyncing = true;
     
     try {
-      console.log('🔄 Starting initial sync for active sales...');
+      console.log('🚀 PRIORITY SYNC: Active sales and company data...');
       this.notifyProgress('Initializing', 0, 4);
 
+      // STEP 1: Company data (PRIORITY)
       this.notifyProgress('Syncing company data', 1, 4);
       await this.syncCompanyData(companyId);
 
+      // STEP 2: Active sales (PRIORITY)
       this.notifyProgress('Syncing active sales', 2, 4);
       const activeSales = await this.syncActiveSales(companyId);
 
+      // STEP 3: Active sales lots (PRIORITY)
       this.notifyProgress('Syncing items', 3, 4);
       await this.syncLotsForActiveSales(activeSales);
 
+      // STEP 4: Active sales photos metadata (PRIORITY)
       this.notifyProgress('Syncing photos', 4, 4);
       await this.syncPhotosForActiveSales(activeSales);
 
-      // Background: Download photo blobs (non-blocking)
+      await offlineStorage.setLastSyncTime(Date.now());
+      console.log('✅ Priority sync complete');
+      this.notifyProgress('Complete', 4, 4);
+
+      // BACKGROUND: Download photo blobs (non-blocking)
       this.downloadPhotoBlobsInBackground(activeSales);
 
-      // Background: Push any pending local changes (non-blocking)
+      // BACKGROUND: Sync remaining data (non-blocking)
+      this.syncRemainingDataInBackground(companyId);
+
+      // BACKGROUND: Push any pending local changes (non-blocking)
       this.pushLocalChangesInBackground();
 
-      await offlineStorage.setLastSyncTime(Date.now());
-      console.log('✅ Initial sync complete');
-      this.notifyProgress('Complete', 4, 4);
     } catch (error) {
-      console.error('❌ Initial sync failed:', error);
+      console.error('❌ Priority sync failed:', error);
       this.notifyProgress('Error', 0, 0);
       throw error;
     } finally {
       this.isSyncing = false;
     }
+  }
+
+  /**
+   * BACKGROUND: Sync remaining data (completed sales, contacts, documents)
+   */
+  private syncRemainingDataInBackground(companyId: string): void {
+    setTimeout(async () => {
+      try {
+        console.log('📦 BACKGROUND SYNC: Remaining data...');
+
+        // Completed sales
+        await this.syncCompletedSales(companyId);
+
+        // Contacts (company + sale level)
+        await this.syncContacts(companyId);
+
+        // Documents (company + sale level)
+        await this.syncDocuments(companyId);
+
+        // Lookup categories
+        await this.syncLookupCategories(companyId);
+
+        console.log('✅ Background sync complete');
+      } catch (error) {
+        console.error('❌ Background sync failed:', error);
+      }
+    }, 3000); // Start after 3 seconds
   }
 
   private async syncCompanyData(companyId: string): Promise<void> {
@@ -108,6 +148,148 @@ class SyncService {
     return data || [];
   }
 
+  private async syncCompletedSales(companyId: string): Promise<void> {
+    console.log('📦 Syncing completed sales...');
+    
+    const { data, error } = await supabase
+      .from('sales')
+      .select('*')
+      .eq('company_id', companyId)
+      .eq('status', 'completed')
+      .order('start_date', { ascending: false });
+
+    if (error) throw error;
+
+    if (data && data.length > 0) {
+      console.log(`📦 Found ${data.length} completed sales`);
+      for (const sale of data) {
+        await offlineStorage.upsertSale(sale);
+      }
+
+      // Sync lots and photos for completed sales
+      await this.syncLotsForSales(data);
+      await this.syncPhotosForSales(data);
+    }
+  }
+
+  private async syncContacts(companyId: string): Promise<void> {
+    console.log('👥 Syncing contacts...');
+    
+    try {
+      // Company-level contacts
+      const { data: companyContacts, error: companyError } = await supabase
+        .from('contacts')
+        .select('*')
+        .eq('company_id', companyId)
+        .is('sale_id', null);
+
+      if (companyError) throw companyError;
+
+      if (companyContacts && companyContacts.length > 0) {
+        console.log(`👥 Found ${companyContacts.length} company contacts`);
+        for (const contact of companyContacts) {
+          await offlineStorage.upsertItem('contacts', contact);
+        }
+      }
+
+      // Sale-level contacts (for all sales)
+      const { data: sales } = await supabase
+        .from('sales')
+        .select('id')
+        .eq('company_id', companyId);
+
+      if (sales && sales.length > 0) {
+        const saleIds = sales.map(s => s.id);
+        
+        const { data: saleContacts, error: saleError } = await supabase
+          .from('contacts')
+          .select('*')
+          .in('sale_id', saleIds);
+
+        if (saleError) throw saleError;
+
+        if (saleContacts && saleContacts.length > 0) {
+          console.log(`👥 Found ${saleContacts.length} sale contacts`);
+          for (const contact of saleContacts) {
+            await offlineStorage.upsertItem('contacts', contact);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error syncing contacts:', error);
+    }
+  }
+
+  private async syncDocuments(companyId: string): Promise<void> {
+    console.log('📄 Syncing documents...');
+    
+    try {
+      // Company-level documents
+      const { data: companyDocs, error: companyError } = await supabase
+        .from('documents')
+        .select('*')
+        .eq('company_id', companyId)
+        .is('sale_id', null);
+
+      if (companyError) throw companyError;
+
+      if (companyDocs && companyDocs.length > 0) {
+        console.log(`📄 Found ${companyDocs.length} company documents`);
+        for (const doc of companyDocs) {
+          await offlineStorage.upsertItem('documents', doc);
+        }
+      }
+
+      // Sale-level documents (for all sales)
+      const { data: sales } = await supabase
+        .from('sales')
+        .select('id')
+        .eq('company_id', companyId);
+
+      if (sales && sales.length > 0) {
+        const saleIds = sales.map(s => s.id);
+        
+        const { data: saleDocs, error: saleError } = await supabase
+          .from('documents')
+          .select('*')
+          .in('sale_id', saleIds);
+
+        if (saleError) throw saleError;
+
+        if (saleDocs && saleDocs.length > 0) {
+          console.log(`📄 Found ${saleDocs.length} sale documents`);
+          for (const doc of saleDocs) {
+            await offlineStorage.upsertItem('documents', doc);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error syncing documents:', error);
+    }
+  }
+
+  private async syncLookupCategories(companyId: string): Promise<void> {
+    console.log('🏷️ Syncing lookup categories...');
+    
+    try {
+      const { data, error } = await supabase
+        .from('lookup_categories')
+        .select('*')
+        .eq('company_id', companyId);
+
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        console.log(`🏷️ Found ${data.length} lookup categories`);
+        for (const category of data) {
+          await offlineStorage.upsertItem('lookup_categories', category);
+        }
+      }
+    } catch (error) {
+      console.error('Error syncing lookup categories:', error);
+    }
+  }
+
   private async syncLotsForActiveSales(activeSales: any[]): Promise<void> {
     if (activeSales.length === 0) return;
 
@@ -122,6 +304,26 @@ class SyncService {
 
     if (data && data.length > 0) {
       console.log(`📋 Found ${data.length} items for active sales`);
+      for (const lot of data) {
+        await offlineStorage.upsertLot(lot);
+      }
+    }
+  }
+
+  private async syncLotsForSales(sales: any[]): Promise<void> {
+    if (sales.length === 0) return;
+
+    const saleIds = sales.map(s => s.id);
+    
+    const { data, error } = await supabase
+      .from('lots')
+      .select('*')
+      .in('sale_id', saleIds);
+
+    if (error) throw error;
+
+    if (data && data.length > 0) {
+      console.log(`📋 Found ${data.length} items for sales`);
       for (const lot of data) {
         await offlineStorage.upsertLot(lot);
       }
@@ -152,6 +354,36 @@ class SyncService {
 
     if (photos && photos.length > 0) {
       console.log(`🖼️  Found ${photos.length} photos for active sales`);
+      for (const photo of photos) {
+        await offlineStorage.upsertPhoto({ ...photo, synced: true });
+      }
+    }
+  }
+
+  private async syncPhotosForSales(sales: any[]): Promise<void> {
+    if (sales.length === 0) return;
+
+    const saleIds = sales.map(s => s.id);
+    
+    const { data: lots, error: lotsError } = await supabase
+      .from('lots')
+      .select('id')
+      .in('sale_id', saleIds);
+
+    if (lotsError) throw lotsError;
+    if (!lots || lots.length === 0) return;
+
+    const lotIds = lots.map(l => l.id);
+
+    const { data: photos, error: photosError } = await supabase
+      .from('photos')
+      .select('*')
+      .in('lot_id', lotIds);
+
+    if (photosError) throw photosError;
+
+    if (photos && photos.length > 0) {
+      console.log(`🖼️  Found ${photos.length} photos`);
       for (const photo of photos) {
         await offlineStorage.upsertPhoto({ ...photo, synced: true });
       }
@@ -210,7 +442,7 @@ class SyncService {
 
   async performFullSync(companyId: string): Promise<void> {
     if (this.isSyncing) {
-      console.log('Sync already in progress');
+      console.log('⏸️ Sync already in progress');
       return;
     }
 
@@ -239,7 +471,7 @@ class SyncService {
    */
   async performSync(): Promise<void> {
     if (this.isSyncing) {
-      console.log('Sync already in progress');
+      console.log('⏸️ Sync already in progress');
       return;
     }
 
@@ -269,31 +501,31 @@ class SyncService {
   }
 
   private async pushLocalChanges(): Promise<void> {
-    console.log('Pushing local changes to cloud...');
+    console.log('📤 Pushing local changes to cloud...');
     
     const pendingItems = await offlineStorage.getPendingSyncItems();
     
     if (pendingItems.length === 0) {
-      console.log('No pending changes to push');
+      console.log('✓ No pending changes to push');
       return;
     }
 
-    console.log(`Found ${pendingItems.length} pending changes to push`);
+    console.log(`📤 Found ${pendingItems.length} pending changes to push`);
 
     for (const item of pendingItems) {
       try {
-        await this.processSyncItem(item.type, item.table, item.data);
+        await this.syncItem(item.table, item.type, item.data);
         await offlineStorage.markSynced(item.id);
       } catch (error: any) {
-        console.error(`Failed to sync item ${item.id}:`, error.message);
+        console.error(`Failed to sync ${item.table} ${item.type}:`, error.message);
       }
     }
 
     await offlineStorage.clearSyncedItems();
-    console.log('Local changes pushed successfully');
   }
 
-  private async processSyncItem(type: string, table: string, data: any): Promise<void> {
+  private async syncItem(table: string, type: 'create' | 'update' | 'delete', data: any): Promise<void> {
+    // Special handling for photos
     if (table === 'photos') {
       if (type === 'delete') {
         if (data.file_path) {
@@ -332,11 +564,11 @@ class SyncService {
       const unsyncedPhotos = await offlineStorage.getUnsyncedPhotos();
       
       if (unsyncedPhotos.length === 0) {
-        console.log('No photos to sync');
+        console.log('✓ No photos to sync');
         return;
       }
 
-      console.log(`Found ${unsyncedPhotos.length} photos to sync`);
+      console.log(`🖼️  Found ${unsyncedPhotos.length} photos to sync`);
 
       // Process in background - non-blocking
       setTimeout(async () => {
@@ -383,7 +615,7 @@ class SyncService {
   }
 
   private async replaceTempLotNumbers(): Promise<void> {
-    console.log('Replacing temporary lot numbers...');
+    console.log('🔢 Replacing temporary lot numbers...');
 
     try {
       const { data: sales, error } = await supabase
@@ -393,7 +625,7 @@ class SyncService {
       if (error) throw error;
 
       if (!sales || sales.length === 0) {
-        console.log('No sales found');
+        console.log('✓ No sales found');
         return;
       }
 
@@ -401,14 +633,14 @@ class SyncService {
         await LotNumberService.reassignTemporaryNumbers(sale.id);
       }
 
-      console.log('Temporary lot numbers replaced successfully');
+      console.log('✅ Temporary lot numbers replaced successfully');
     } catch (error) {
       console.error('Error replacing temporary lot numbers:', error);
     }
   }
 
   private async pullRemoteChanges(): Promise<void> {
-    console.log('Pulling remote changes from cloud...');
+    console.log('📥 Pulling remote changes from cloud...');
     
     const lastSyncTime = await offlineStorage.getLastSyncTime();
     
@@ -420,7 +652,7 @@ class SyncService {
     if (companiesError) throw companiesError;
 
     if (companies && companies.length > 0) {
-      console.log(`Pulled ${companies.length} updated companies`);
+      console.log(`📥 Pulled ${companies.length} updated companies`);
       for (const company of companies) {
         await offlineStorage.upsertCompany(company);
       }
@@ -434,7 +666,7 @@ class SyncService {
     if (salesError) throw salesError;
 
     if (sales && sales.length > 0) {
-      console.log(`Pulled ${sales.length} updated sales`);
+      console.log(`📥 Pulled ${sales.length} updated sales`);
       for (const sale of sales) {
         await offlineStorage.upsertSale(sale);
       }
@@ -448,7 +680,7 @@ class SyncService {
     if (lotsError) throw lotsError;
 
     if (lots && lots.length > 0) {
-      console.log(`Pulled ${lots.length} updated lots`);
+      console.log(`📥 Pulled ${lots.length} updated lots`);
       for (const lot of lots) {
         await offlineStorage.upsertLot(lot);
       }
@@ -462,7 +694,7 @@ class SyncService {
     if (photosError) throw photosError;
 
     if (photos && photos.length > 0) {
-      console.log(`Pulled ${photos.length} updated photos metadata`);
+      console.log(`📥 Pulled ${photos.length} updated photos metadata`);
       
       // Download in background
       setTimeout(async () => {
@@ -485,11 +717,11 @@ class SyncService {
     }
 
     await offlineStorage.setLastSyncTime(Date.now());
-    console.log('Remote changes pulled successfully');
+    console.log('✅ Remote changes pulled successfully');
   }
 
   private async pullAllData(companyId: string): Promise<void> {
-    console.log('Pulling all data from cloud...');
+    console.log('📥 Pulling all data from cloud...');
 
     const { data: company, error: companyError } = await supabase
       .from('companies')

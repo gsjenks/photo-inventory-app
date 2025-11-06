@@ -11,6 +11,8 @@ interface AppContextType {
   setCurrentCompany: (company: Company) => void;
   refreshCompanies: () => Promise<void>;
   signOut: () => Promise<void>;
+  companySwitched: boolean;
+  setCompanySwitched: (switched: boolean) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -18,8 +20,18 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [currentCompany, setCurrentCompany] = useState<Company | null>(null);
+  const [currentCompany, setCurrentCompanyState] = useState<Company | null>(null);
   const [companies, setCompanies] = useState<Company[]>([]);
+  const [companySwitched, setCompanySwitched] = useState(false);
+
+  // Wrapper to track company changes
+  const setCurrentCompany = (company: Company) => {
+    if (currentCompany?.id !== company.id) {
+      console.log(`🔄 Company switched: ${currentCompany?.name} → ${company.name}`);
+      setCompanySwitched(true);
+    }
+    setCurrentCompanyState(company);
+  };
 
   useEffect(() => {
     // Check active sessions and sets the user
@@ -41,7 +53,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       refreshCompanies();
     } else {
       setCompanies([]);
-      setCurrentCompany(null);
+      setCurrentCompanyState(null);
     }
   }, [user]);
 
@@ -72,11 +84,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         
         // Set current company to first one if not set
         if (!currentCompany && companiesData && companiesData.length > 0) {
-          setCurrentCompany(companiesData[0]);
+          setCurrentCompanyState(companiesData[0]);
         }
       } else {
         setCompanies([]);
-        setCurrentCompany(null);
+        setCurrentCompanyState(null);
       }
     } catch (error) {
       console.error('Error fetching companies:', error);
@@ -86,7 +98,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const signOut = async () => {
     await supabase.auth.signOut();
     setUser(null);
-    setCurrentCompany(null);
+    setCurrentCompanyState(null);
     setCompanies([]);
   };
 
@@ -100,6 +112,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setCurrentCompany,
         refreshCompanies,
         signOut,
+        companySwitched,
+        setCompanySwitched,
       }}
     >
       {children}
