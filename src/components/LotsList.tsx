@@ -58,26 +58,49 @@ export default function LotsList({ lots, saleId, onRefresh }: LotsListProps) {
 
         // If not found locally, try Supabase
         try {
-          const { data: photos } = await supabase
+          const { data: photos, error: photosError } = await supabase
             .from('photos')
             .select('*')
             .eq('lot_id', lot.id)
             .eq('is_primary', true)
             .limit(1);
 
+          if (photosError) {
+            console.debug('Photos query error for lot', lot.id, ':', photosError);
+            continue; // Skip this lot and continue with others
+          }
+
           if (photos && photos.length > 0) {
             const photo = photos[0];
-            const { data: urlData } = await supabase.storage
-              .from('photos')
-              .createSignedUrl(photo.file_path, 3600);
+            
+            // Check if file_path exists before creating signed URL
+            if (!photo.file_path) {
+              console.debug(`No file_path for photo ${photo.id}`);
+              continue;
+            }
 
-            if (urlData?.signedUrl) {
-              urls[lot.id] = urlData.signedUrl;
+            try {
+              const { data: urlData, error: storageError } = await supabase.storage
+                .from('photos')
+                .createSignedUrl(photo.file_path, 3600);
+
+              if (storageError) {
+                console.debug('Storage URL error for lot', lot.id, ':', storageError.message);
+                // Don't break the loop, just skip this photo
+                continue;
+              }
+
+              if (urlData?.signedUrl) {
+                urls[lot.id] = urlData.signedUrl;
+              }
+            } catch (urlError) {
+              console.debug('URL creation failed for lot', lot.id, ':', urlError);
+              // Continue with other photos
             }
           }
         } catch (supabaseError) {
           // Silently handle Supabase errors (might be offline)
-          console.debug('Supabase photo fetch failed:', supabaseError);
+          console.debug('Supabase photo fetch failed for lot', lot.id, ':', supabaseError);
         }
       }
       

@@ -4,7 +4,7 @@ import { useFooter } from '../context/FooterContext';
 import { supabase } from '../lib/supabase';
 import type { Sale, Contact, Document } from '../types';
 import { 
-  Settings,
+//  Settings,
   Package,
   TrendingUp,
   Calendar,

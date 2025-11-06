@@ -39,12 +39,28 @@ export default function LotViewModal({ lot, saleId, onClose, onDelete }: LotView
       if (data && data.length > 0) {
         const urls: Record<string, string> = {};
         for (const photo of data) {
-          const { data: urlData } = await supabase.storage
-            .from('photos')
-            .createSignedUrl(photo.file_path, 3600);
-          
-          if (urlData?.signedUrl) {
-            urls[photo.id] = urlData.signedUrl;
+          // Validate file_path exists
+          if (!photo.file_path) {
+            console.debug(`Photo ${photo.id} has no file_path, skipping`);
+            continue;
+          }
+
+          try {
+            const { data: urlData, error: storageError } = await supabase.storage
+              .from('photos')
+              .createSignedUrl(photo.file_path, 3600);
+            
+            if (storageError) {
+              console.debug(`Storage error for photo ${photo.id}:`, storageError.message);
+              continue; // Skip this photo, don't crash
+            }
+
+            if (urlData?.signedUrl) {
+              urls[photo.id] = urlData.signedUrl;
+            }
+          } catch (urlError) {
+            console.debug(`Failed to create signed URL for photo ${photo.id}:`, urlError);
+            // Continue with other photos
           }
         }
         setPhotoUrls(urls);
