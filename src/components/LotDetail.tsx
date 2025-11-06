@@ -632,7 +632,7 @@ export default function LotDetail() {
               <input
                 type="text"
                 value={lot.name || ''}
-                onChange={(e) => setLot({ ...lot, name: e.target.value })}
+                onChange={(e) => setLot({ ...lot, name: toTitleCase(e.target.value) })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
                 placeholder="e.g., Victorian Walnut Dresser"
               />
