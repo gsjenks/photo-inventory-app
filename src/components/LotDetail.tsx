@@ -562,7 +562,7 @@ export default function LotDetail() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="max-w-4xl mx-auto pb-32">
       {/* Hidden file input */}
       <input
         type="file"

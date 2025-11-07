@@ -231,28 +231,29 @@ export default function LotViewModal({ lot, saleId, onClose, onDelete }: LotView
           </div>
         </div>
 
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto">
-          <div className="p-6 space-y-6">
-            {/* Photo Gallery */}
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto p-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            {/* Photo Gallery Column */}
             <div className="space-y-4">
-              <h3 className="text-lg font-semibold text-gray-900">Photos</h3>
               {loading ? (
-                <div className="flex items-center justify-center py-12">
+                <div className="aspect-square bg-gray-100 rounded-lg flex items-center justify-center">
                   <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600" />
                 </div>
               ) : photos.length === 0 ? (
-                <div className="text-center py-12 text-gray-500 bg-gray-50 rounded-lg">
-                  <p className="text-sm">No photos available</p>
+                <div className="aspect-square bg-gray-100 rounded-lg flex items-center justify-center border-2 border-dashed border-gray-300">
+                  <div className="text-center">
+                    <p className="text-gray-500 text-sm">No photos</p>
+                  </div>
                 </div>
               ) : (
                 <div className="space-y-4">
                   {/* Main Photo Display */}
-                  <div className="relative bg-gray-100 rounded-lg overflow-hidden" style={{ height: '500px' }}>
+                  <div className="relative aspect-square bg-gray-100 rounded-lg overflow-hidden">
                     {photoUrls[photos[currentPhotoIndex]?.id] ? (
                       <img
                         src={photoUrls[photos[currentPhotoIndex].id]}
-                        alt={`Photo ${currentPhotoIndex + 1}`}
+                        alt={photos[currentPhotoIndex].file_name}
                         className="w-full h-full object-contain"
                       />
                     ) : (
@@ -329,139 +330,113 @@ export default function LotViewModal({ lot, saleId, onClose, onDelete }: LotView
               )}
             </div>
 
-            {/* Lot Details */}
+            {/* Lot Details Column - ALWAYS SHOW ALL FIELDS */}
             <div className="space-y-6">
               <h3 className="text-lg font-semibold text-gray-900">Details</h3>
 
               {/* Description */}
-              {lot.description && (
-                <div>
-                  <p className="text-sm font-medium text-gray-500 mb-2">Description</p>
-                  <p className="text-gray-900 whitespace-pre-wrap">{lot.description}</p>
-                </div>
-              )}
+              <div>
+                <p className="text-sm font-medium text-gray-500 mb-2">Description</p>
+                <p className="text-gray-900 whitespace-pre-wrap">{lot.description || '-'}</p>
+              </div>
 
-              {/* Pricing Grid */}
+              {/* Pricing Grid - ALWAYS SHOW ALL FIELDS */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {(lot.estimate_low || lot.estimate_high) && (
-                  <div>
-                    <p className="text-sm font-medium text-gray-500 mb-1">Estimate</p>
-                    <p className="text-base font-semibold text-gray-900">
-                      {formatPrice(lot.estimate_low)} - {formatPrice(lot.estimate_high)}
-                    </p>
-                  </div>
-                )}
+                <div>
+                  <p className="text-sm font-medium text-gray-500 mb-1">Estimate</p>
+                  <p className="text-base font-semibold text-gray-900">
+                    {formatPrice(lot.estimate_low)} - {formatPrice(lot.estimate_high)}
+                  </p>
+                </div>
 
-                {lot.starting_bid && (
-                  <div>
-                    <p className="text-sm font-medium text-gray-500 mb-1">Starting Bid</p>
-                    <p className="text-base font-semibold text-gray-900">
-                      {formatPrice(lot.starting_bid)}
-                    </p>
-                  </div>
-                )}
+                <div>
+                  <p className="text-sm font-medium text-gray-500 mb-1">Starting Bid</p>
+                  <p className="text-base font-semibold text-gray-900">
+                    {formatPrice(lot.starting_bid)}
+                  </p>
+                </div>
 
-                {lot.reserve_price && (
-                  <div>
-                    <p className="text-sm font-medium text-gray-500 mb-1">Reserve</p>
-                    <p className="text-base font-semibold text-gray-900">
-                      {formatPrice(lot.reserve_price)}
-                    </p>
-                  </div>
-                )}
+                <div>
+                  <p className="text-sm font-medium text-gray-500 mb-1">Reserve</p>
+                  <p className="text-base font-semibold text-gray-900">
+                    {formatPrice(lot.reserve_price)}
+                  </p>
+                </div>
 
-                {lot.buy_now_price && (
-                  <div>
-                    <p className="text-sm font-medium text-gray-500 mb-1">Buy Now</p>
-                    <p className="text-base font-semibold text-gray-900">
-                      {formatPrice(lot.buy_now_price)}
-                    </p>
-                  </div>
-                )}
+                <div>
+                  <p className="text-sm font-medium text-gray-500 mb-1">Buy Now</p>
+                  <p className="text-base font-semibold text-gray-900">
+                    {formatPrice(lot.buy_now_price)}
+                  </p>
+                </div>
               </div>
 
-              {/* Physical Details Grid */}
+              {/* Physical Details Grid - ALWAYS SHOW ALL FIELDS */}
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                {(lot.height || lot.width || lot.depth) && (
-                  <div>
-                    <p className="text-sm font-medium text-gray-500 mb-1">Dimensions</p>
-                    <p className="text-base font-semibold text-gray-900">
-                      {formatDimensions(lot)}
-                    </p>
-                  </div>
-                )}
+                <div>
+                  <p className="text-sm font-medium text-gray-500 mb-1">Dimensions</p>
+                  <p className="text-base font-semibold text-gray-900">
+                    {formatDimensions(lot)}
+                  </p>
+                </div>
 
-                {lot.weight && (
-                  <div>
-                    <p className="text-sm font-medium text-gray-500 mb-1">Weight</p>
-                    <p className="text-base font-semibold text-gray-900">
-                      {formatWeight(lot.weight)}
-                    </p>
-                  </div>
-                )}
+                <div>
+                  <p className="text-sm font-medium text-gray-500 mb-1">Weight</p>
+                  <p className="text-base font-semibold text-gray-900">
+                    {formatWeight(lot.weight)}
+                  </p>
+                </div>
 
-                {lot.quantity && (
-                  <div>
-                    <p className="text-sm font-medium text-gray-500 mb-1">Quantity</p>
-                    <p className="text-base font-semibold text-gray-900">
-                      {lot.quantity}
-                    </p>
-                  </div>
-                )}
+                <div>
+                  <p className="text-sm font-medium text-gray-500 mb-1">Quantity</p>
+                  <p className="text-base font-semibold text-gray-900">
+                    {lot.quantity || '-'}
+                  </p>
+                </div>
               </div>
 
-              {/* Metadata Grid */}
+              {/* Metadata Grid - ALWAYS SHOW ALL FIELDS */}
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                {lot.category && (
-                  <div>
-                    <p className="text-sm font-medium text-gray-500 mb-1">Category</p>
+                <div>
+                  <p className="text-sm font-medium text-gray-500 mb-1">Category</p>
+                  {lot.category ? (
                     <span className="inline-block px-3 py-1 bg-indigo-100 text-indigo-700 rounded-full text-sm font-medium">
                       {lot.category}
                     </span>
-                  </div>
-                )}
+                  ) : (
+                    <p className="text-base text-gray-900">-</p>
+                  )}
+                </div>
 
-                {lot.condition && (
-                  <div>
-                    <p className="text-sm font-medium text-gray-500 mb-1">Condition</p>
-                    <p className="text-base text-gray-900">{lot.condition}</p>
-                  </div>
-                )}
+                <div>
+                  <p className="text-sm font-medium text-gray-500 mb-1">Condition</p>
+                  <p className="text-base text-gray-900">{lot.condition || '-'}</p>
+                </div>
 
-                {lot.style && (
-                  <div>
-                    <p className="text-sm font-medium text-gray-500 mb-1">Style/Period</p>
-                    <p className="text-base text-gray-900">{lot.style}</p>
-                  </div>
-                )}
+                <div>
+                  <p className="text-sm font-medium text-gray-500 mb-1">Style/Period</p>
+                  <p className="text-base text-gray-900">{lot.style || '-'}</p>
+                </div>
 
-                {lot.origin && (
-                  <div>
-                    <p className="text-sm font-medium text-gray-500 mb-1">Origin</p>
-                    <p className="text-base text-gray-900">{lot.origin}</p>
-                  </div>
-                )}
+                <div>
+                  <p className="text-sm font-medium text-gray-500 mb-1">Origin</p>
+                  <p className="text-base text-gray-900">{lot.origin || '-'}</p>
+                </div>
 
-                {lot.creator && (
-                  <div>
-                    <p className="text-sm font-medium text-gray-500 mb-1">Creator/Maker</p>
-                    <p className="text-base text-gray-900">{lot.creator}</p>
-                  </div>
-                )}
+                <div>
+                  <p className="text-sm font-medium text-gray-500 mb-1">Creator/Maker</p>
+                  <p className="text-base text-gray-900">{lot.creator || '-'}</p>
+                </div>
 
-                {lot.materials && (
-                  <div>
-                    <p className="text-sm font-medium text-gray-500 mb-1">Materials</p>
-                    <p className="text-base text-gray-900">{lot.materials}</p>
-                  </div>
-                )}
+                <div>
+                  <p className="text-sm font-medium text-gray-500 mb-1">Materials</p>
+                  <p className="text-base text-gray-900">{lot.materials || '-'}</p>
+                </div>
 
-                {lot.consignor && (
-                  <div>
-                    <p className="text-sm font-medium text-gray-500 mb-1">Consignor</p>
-                    <p className="text-base text-gray-900">{lot.consignor}</p>
-                  </div>
-                )}
+                <div>
+                  <p className="text-sm font-medium text-gray-500 mb-1">Consignor</p>
+                  <p className="text-base text-gray-900">{lot.consignor || '-'}</p>
+                </div>
               </div>
             </div>
           </div>
