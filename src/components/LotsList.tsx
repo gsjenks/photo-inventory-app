@@ -22,7 +22,6 @@ export default function LotsList({ lots, saleId, onRefresh }: LotsListProps) {
     if (lots?.length > 0) {
       loadPrimaryPhotos();
     } else {
-      // Clear photo URLs when no lots
       setPhotoUrls({});
     }
   }, [lots]);
@@ -55,7 +54,7 @@ export default function LotsList({ lots, saleId, onRefresh }: LotsListProps) {
           const blob = await offlineStorage.getPhotoBlob(primaryLocal.id);
           if (blob) {
             urls[lot.id] = URL.createObjectURL(blob);
-            continue; // Found local photo, skip Supabase
+            continue;
           }
         }
 
@@ -70,13 +69,12 @@ export default function LotsList({ lots, saleId, onRefresh }: LotsListProps) {
 
           if (photosError) {
             console.debug('Photos query error for lot', lot.id, ':', photosError);
-            continue; // Skip this lot and continue with others
+            continue;
           }
 
           if (photos && photos.length > 0) {
             const photo = photos[0];
             
-            // Check if file_path exists before creating signed URL
             if (!photo.file_path) {
               console.debug(`No file_path for photo ${photo.id}`);
               continue;
@@ -89,7 +87,6 @@ export default function LotsList({ lots, saleId, onRefresh }: LotsListProps) {
 
               if (storageError) {
                 console.debug('Storage URL error for lot', lot.id, ':', storageError.message);
-                // Don't break the loop, just skip this photo
                 continue;
               }
 
@@ -98,11 +95,9 @@ export default function LotsList({ lots, saleId, onRefresh }: LotsListProps) {
               }
             } catch (urlError) {
               console.debug('URL creation failed for lot', lot.id, ':', urlError);
-              // Continue with other photos
             }
           }
         } catch (supabaseError) {
-          // Silently handle Supabase errors (might be offline)
           console.debug('Supabase photo fetch failed for lot', lot.id, ':', supabaseError);
         }
       }
@@ -215,7 +210,7 @@ export default function LotsList({ lots, saleId, onRefresh }: LotsListProps) {
                       </h3>
                     </div>
 
-                    {/* Details Grid */}
+                    {/* Details Grid - REDUCED METADATA */}
                     <div 
                       className="grid grid-cols-2 gap-4 cursor-pointer"
                       onClick={() => setSelectedLot(lot)}
@@ -224,75 +219,37 @@ export default function LotsList({ lots, saleId, onRefresh }: LotsListProps) {
                       <div>
                         <p className="text-xs font-medium text-gray-500 mb-1">Estimate</p>
                         <p className="text-sm font-semibold text-gray-900">
-                          {lot.estimate_low || lot.estimate_high ? (
-                            <>
-                              {formatPrice(lot.estimate_low)} - {formatPrice(lot.estimate_high)}
-                            </>
-                          ) : (
-                            '-'
-                          )}
+                          {formatPrice(lot.estimate_low)} - {formatPrice(lot.estimate_high)}
                         </p>
                       </div>
 
                       {/* Starting Bid */}
-                      {lot.starting_bid && (
-                        <div>
-                          <p className="text-xs font-medium text-gray-500 mb-1">Starting Bid</p>
-                          <p className="text-sm font-semibold text-gray-900">
-                            {formatPrice(lot.starting_bid)}
-                          </p>
-                        </div>
-                      )}
+                      <div>
+                        <p className="text-xs font-medium text-gray-500 mb-1">Starting Bid</p>
+                        <p className="text-sm font-semibold text-gray-900">
+                          {formatPrice(lot.starting_bid)}
+                        </p>
+                      </div>
 
-                      {/* Reserve Price */}
-                      {lot.reserve_price && (
-                        <div>
-                          <p className="text-xs font-medium text-gray-500 mb-1">Reserve</p>
-                          <p className="text-sm font-semibold text-gray-900">
-                            {formatPrice(lot.reserve_price)}
-                          </p>
-                        </div>
-                      )}
-
-                      {/* Buy Now Price */}
-                      {lot.buy_now_price && (
-                        <div>
-                          <p className="text-xs font-medium text-gray-500 mb-1">Buy Now</p>
-                          <p className="text-sm font-semibold text-gray-900">
-                            {formatPrice(lot.buy_now_price)}
-                          </p>
-                        </div>
-                      )}
-
-                      {/* Dimensions */}
-                      {(lot.height || lot.width || lot.depth) && (
-                        <div>
-                          <p className="text-xs font-medium text-gray-500 mb-1">Dimensions</p>
-                          <p className="text-sm font-semibold text-gray-900">
-                            {formatDimensions(lot)}
-                          </p>
-                        </div>
-                      )}
-
-                      {/* Weight */}
-                      {lot.weight && (
-                        <div>
-                          <p className="text-xs font-medium text-gray-500 mb-1">Weight</p>
-                          <p className="text-sm font-semibold text-gray-900">
-                            {formatWeight(lot.weight)}
-                          </p>
-                        </div>
-                      )}
+                      {/* Dimensions & Weight - Combined */}
+                      <div className="col-span-2">
+                        <p className="text-xs font-medium text-gray-500 mb-1">Dimensions & Weight</p>
+                        <p className="text-sm font-semibold text-gray-900">
+                          {formatDimensions(lot)} • {formatWeight(lot.weight)}
+                        </p>
+                      </div>
 
                       {/* Category */}
-                      {lot.category && (
-                        <div>
-                          <p className="text-xs font-medium text-gray-500 mb-1">Category</p>
+                      <div className="col-span-2">
+                        <p className="text-xs font-medium text-gray-500 mb-1">Category</p>
+                        {lot.category ? (
                           <span className="inline-block px-2 py-1 bg-indigo-100 text-indigo-700 rounded text-xs font-medium">
                             {lot.category}
                           </span>
-                        </div>
-                      )}
+                        ) : (
+                          <span className="text-sm text-gray-400">-</span>
+                        )}
+                      </div>
                     </div>
                   </div>
 
@@ -334,7 +291,6 @@ export default function LotsList({ lots, saleId, onRefresh }: LotsListProps) {
           saleId={saleId}
           onClose={() => {
             setSelectedLot(null);
-            // Refresh photos when closing modal in case they changed
             loadPrimaryPhotos();
           }}
           onDelete={() => {

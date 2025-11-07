@@ -340,8 +340,8 @@ export default function LotViewModal({ lot, saleId, onClose, onDelete }: LotView
                 <p className="text-gray-900 whitespace-pre-wrap">{lot.description || '-'}</p>
               </div>
 
-              {/* Pricing Grid - ALWAYS SHOW ALL FIELDS */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {/* Pricing Grid - ESTIMATE AND STARTING BID ONLY */}
+              <div className="grid grid-cols-2 gap-4">
                 <div>
                   <p className="text-sm font-medium text-gray-500 mb-1">Estimate</p>
                   <p className="text-base font-semibold text-gray-900">
@@ -355,35 +355,14 @@ export default function LotViewModal({ lot, saleId, onClose, onDelete }: LotView
                     {formatPrice(lot.starting_bid)}
                   </p>
                 </div>
-
-                <div>
-                  <p className="text-sm font-medium text-gray-500 mb-1">Reserve</p>
-                  <p className="text-base font-semibold text-gray-900">
-                    {formatPrice(lot.reserve_price)}
-                  </p>
-                </div>
-
-                <div>
-                  <p className="text-sm font-medium text-gray-500 mb-1">Buy Now</p>
-                  <p className="text-base font-semibold text-gray-900">
-                    {formatPrice(lot.buy_now_price)}
-                  </p>
-                </div>
               </div>
 
-              {/* Physical Details Grid - ALWAYS SHOW ALL FIELDS */}
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              {/* Physical Details Grid - COMBINED DIMENSIONS & WEIGHT */}
+              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <p className="text-sm font-medium text-gray-500 mb-1">Dimensions</p>
+                  <p className="text-sm font-medium text-gray-500 mb-1">Dimensions & Weight</p>
                   <p className="text-base font-semibold text-gray-900">
-                    {formatDimensions(lot)}
-                  </p>
-                </div>
-
-                <div>
-                  <p className="text-sm font-medium text-gray-500 mb-1">Weight</p>
-                  <p className="text-base font-semibold text-gray-900">
-                    {formatWeight(lot.weight)}
+                    {formatDimensions(lot)} • {formatWeight(lot.weight)}
                   </p>
                 </div>
 
