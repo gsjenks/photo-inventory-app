@@ -89,39 +89,10 @@ export default function LotDetail() {
     };
   }, [photoUrls]);
 
-  // Set footer actions
+  // ✅ UPDATED: Set footer actions in new order: save, camera, upload, back, magic, delete
   useEffect(() => {
     setActions([
-      {
-        id: 'delete',
-        label: 'Delete',
-        icon: <Trash2 className="w-4 h-4" />,
-        onClick: handleDelete,
-        variant: 'danger',
-        disabled: isNewLot
-      },
-      {
-        id: 'camera',
-        label: 'Camera',
-        icon: <Camera className="w-4 h-4" />,
-        onClick: handleCamera,
-        variant: 'secondary'
-      },
-      {
-        id: 'upload',
-        label: 'Upload Photos',
-        icon: <Upload className="w-4 h-4" />,
-        onClick: () => document.getElementById('photo-upload')?.click(),
-        variant: 'secondary'
-      },
-      {
-        id: 'ai-enrich',
-        label: 'AI Enrich',
-        icon: <Sparkles className="w-4 h-4" />,
-        onClick: handleAIEnrich,
-        variant: 'ai',
-        disabled: photos.length === 0
-      },
+      // 1. SAVE
       {
         id: 'save',
         label: isNewLot ? 'Create Item' : 'Save Changes',
@@ -130,11 +101,55 @@ export default function LotDetail() {
         variant: 'primary',
         disabled: !lot.name || saving,
         loading: saving
+      },
+      // 2. CAMERA
+      {
+        id: 'camera',
+        label: 'Camera',
+        icon: <Camera className="w-4 h-4" />,
+        onClick: handleCamera,
+        variant: 'secondary',
+        disabled: isNewLot
+      },
+      // 3. UPLOAD
+      {
+        id: 'upload',
+        label: 'Upload',
+        icon: <Upload className="w-4 h-4" />,
+        onClick: () => document.getElementById('photo-upload')?.click(),
+        variant: 'secondary',
+        disabled: isNewLot
+      },
+      // 4. BACK
+      {
+        id: 'back',
+        label: 'Back',
+        icon: <ArrowLeft className="w-4 h-4" />,
+        onClick: () => navigate(`/sales/${saleId}`),
+        variant: 'secondary'
+      },
+      // 5. MAGIC (AI Enrich)
+      {
+        id: 'ai-enrich',
+        label: 'Magic',
+        icon: <Sparkles className="w-4 h-4" />,
+        onClick: handleAIEnrich,
+        variant: 'ai',
+        disabled: photos.length === 0 || !isOnline
+      },
+      // 6. DELETE
+      {
+        id: 'delete',
+        label: 'Delete',
+        icon: <Trash2 className="w-4 h-4" />,
+        onClick: handleDelete,
+        variant: 'danger',
+        disabled: isNewLot
       }
     ]);
 
     return () => clearActions();
-  }, [lot, photos, isNewLot, saving]);
+  }, [lot, photos, isNewLot, saving, saleId, isOnline]);
 
   const initializeNewLot = async () => {
     try {
@@ -598,7 +613,10 @@ export default function LotDetail() {
             <ImageIcon className="w-12 h-12 text-gray-400 mx-auto mb-4" />
             <p className="text-sm mb-2">No photos yet</p>
             <p className="text-xs text-gray-400">
-              Use the Camera or Upload button to add photos
+              {isNewLot 
+                ? 'Save the lot first, then use Camera or Upload to add photos'
+                : 'Use the Camera or Upload button to add photos'
+              }
             </p>
           </div>
         ) : (
@@ -652,41 +670,41 @@ export default function LotDetail() {
         )}
       </div>
 
-      {/* Form Fields */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-        <div className="space-y-6">
-          {/* Basic Information */}
+      {/* Lot Details Form */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 space-y-6">
+        <div>
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Item Details</h2>
+          
           <div className="space-y-4">
-            <h2 className="text-lg font-semibold text-gray-900">Basic Information</h2>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Item Name *
-              </label>
-              <input
-                type="text"
-                value={lot.name || ''}
-                onChange={(e) => setLot({ ...lot, name: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                placeholder="e.g., Victorian Mahogany Dresser"
-                required
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Description
-              </label>
-              <textarea
-                value={lot.description || ''}
-                onChange={(e) => setLot({ ...lot, description: e.target.value })}
-                rows={4}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                placeholder="Detailed description of the item..."
-              />
-            </div>
-
+            {/* Basic Info */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Item Name <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={lot.name || ''}
+                  onChange={(e) => setLot({ ...lot, name: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  placeholder="Enter item name"
+                  required
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Description
+                </label>
+                <textarea
+                  value={lot.description || ''}
+                  onChange={(e) => setLot({ ...lot, description: e.target.value })}
+                  rows={4}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  placeholder="Detailed description of the item"
+                />
+              </div>
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Quantity
@@ -695,8 +713,8 @@ export default function LotDetail() {
                   type="number"
                   value={lot.quantity || 1}
                   onChange={(e) => setLot({ ...lot, quantity: parseInt(e.target.value) || 1 })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
                   min="1"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
                 />
               </div>
 
@@ -704,17 +722,21 @@ export default function LotDetail() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Condition
                 </label>
-                <input
-                  type="text"
+                <select
                   value={lot.condition || ''}
                   onChange={(e) => setLot({ ...lot, condition: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                  placeholder="e.g., Excellent, Good, Fair"
-                />
+                >
+                  <option value="">Select condition</option>
+                  <option value="Excellent">Excellent</option>
+                  <option value="Very Good">Very Good</option>
+                  <option value="Good">Good</option>
+                  <option value="Fair">Fair</option>
+                  <option value="Poor">Poor</option>
+                  <option value="As Is">As Is</option>
+                </select>
               </div>
-            </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Category
