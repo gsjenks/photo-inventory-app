@@ -1,9 +1,10 @@
 // services/CameraService.ts
-// Uses native device camera app
+// MOBILE-FIRST: Native camera with device controls (mobile) + File upload (desktop)
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 import offlineStorage from './Offlinestorage';
 import { supabase } from '../lib/supabase';
 import ConnectivityService from './ConnectivityService';
+import PlatformService from './PlatformService';
 
 // Simple UUID v4 generator
 function generateUUID(): string {
@@ -31,21 +32,45 @@ interface FileUploadResult {
 }
 
 class CameraService {
+  constructor() {
+    // Log platform info on initialization
+    PlatformService.logPlatformInfo();
+  }
+
   /**
-   * Open native camera app and capture photo
-   * Automatically saves to device gallery
+   * MOBILE: Open native camera app with device's native controls
+   * ✅ User controls: Flash, Zoom, Focus, Brightness through native camera UI
+   * ✅ Automatically saves to device photo gallery
+   * ✅ Works offline - stores locally, syncs when online
+   * 
+   * DESKTOP: Returns error - use file upload instead
    */
   async takePhoto(lotId: string, isPrimary: boolean = false): Promise<CaptureResult> {
-    try {
-      console.log('📸 Opening native camera...');
+    // PLATFORM CHECK: Only use native camera on mobile
+    if (!PlatformService.isNative()) {
+      return {
+        success: false,
+        error: 'Native camera only available on mobile devices. Please use Upload button.'
+      };
+    }
 
-      // Open native camera app
+    try {
+      console.log('📸 Opening native camera with device controls...');
+
+      // Opens device's NATIVE camera app
+      // User gets ALL native controls:
+      // - Flash (on/off/auto)
+      // - Zoom (pinch to zoom)
+      // - Focus (tap to focus)
+      // - Brightness (exposure control)
+      // - HDR, Portrait mode, etc. (device dependent)
       const image = await Camera.getPhoto({
         quality: 90,
         allowEditing: false,
         resultType: CameraResultType.Base64,
         source: CameraSource.Camera,
-        saveToGallery: true, // Automatically saves to device gallery
+        saveToGallery: true, // ✅ CRITICAL: Saves to device photo gallery
+        correctOrientation: true,
       });
 
       if (!image.base64String) {
@@ -64,7 +89,7 @@ class CameraService {
       // Create blob URL for immediate display
       const blobUrl = URL.createObjectURL(blob);
 
-      console.log('✅ Photo captured:', photoId);
+      console.log('✅ Photo captured with native camera & saved to device gallery');
 
       // BACKGROUND - Save to IndexedDB (non-blocking)
       this.savePhotoToIndexedDB(photoId, lotId, blob, isPrimary).catch(err => {
@@ -93,11 +118,19 @@ class CameraService {
   }
 
   /**
-   * Pick photos from device gallery
+   * MOBILE: Pick photos from device gallery
+   * DESKTOP: Returns error - use file upload instead
    */
   async pickFromGallery(lotId: string): Promise<CaptureResult> {
+    if (!PlatformService.isNative()) {
+      return {
+        success: false,
+        error: 'Gallery picker only available on mobile devices. Please use Upload button.'
+      };
+    }
+
     try {
-      console.log('📷 Opening gallery...');
+      console.log('🖼️ Opening gallery...');
 
       const image = await Camera.getPhoto({
         quality: 90,
@@ -117,7 +150,7 @@ class CameraService {
       const photoId = generateUUID();
       const blobUrl = URL.createObjectURL(blob);
 
-      console.log('✅ Photo selected:', photoId);
+      console.log('✅ Photo selected from gallery');
 
       this.savePhotoToIndexedDB(photoId, lotId, blob, false).catch(err => {
         console.error('Failed to save to IndexedDB:', err);
@@ -159,7 +192,9 @@ class CameraService {
   }
 
   /**
-   * Handle file input from web browser
+   * DESKTOP/WEB: Handle file input from browser
+   * Used on desktop, laptop, Surface Pro, tablets in browser, etc.
+   * Works with drag-drop or file picker
    */
   async handleFileInput(files: FileList, lotId: string): Promise<FileUploadResult> {
     const result: FileUploadResult = {
@@ -167,6 +202,9 @@ class CameraService {
       failed: 0,
       photos: []
     };
+
+    const platform = PlatformService.getPlatform();
+    console.log(`📂 Processing ${files.length} file(s) from ${platform}...`);
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -195,6 +233,7 @@ class CameraService {
       }
     }
 
+    console.log(`✅ Processed ${result.success} file(s), ${result.failed} failed`);
     return result;
   }
 
@@ -304,6 +343,13 @@ class CameraService {
     } catch (error) {
       console.error('Batch sync error:', error);
     }
+  }
+
+  /**
+   * Get platform capabilities for UI decisions
+   */
+  getPlatformCapabilities() {
+    return PlatformService.getPhotoCapabilities();
   }
 }
 

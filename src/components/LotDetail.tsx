@@ -89,10 +89,12 @@ export default function LotDetail() {
     };
   }, [photoUrls]);
 
-  // Set footer actions
+  // Set footer actions - UPDATED WITH PLATFORM DETECTION
   useEffect(() => {
+    const platformCapabilities = CameraService.getPlatformCapabilities();
+    
     setActions([
-      // 1. SAVE
+      // 1. SAVE (Always show)
       {
         id: 'save',
         label: isNewLot ? 'Create Item' : 'Save Changes',
@@ -102,50 +104,50 @@ export default function LotDetail() {
         disabled: !lot.name || saving,
         loading: saving
       },
-      // 2. CAMERA
-      {
+      // 2. CAMERA (Mobile only - native camera with device controls)
+      ...(platformCapabilities.supportsNativeCamera && !isNewLot ? [{
         id: 'camera',
         label: 'Camera',
         icon: <Camera className="w-4 h-4" />,
         onClick: handleTakePhoto,
-        variant: 'secondary',
-        disabled: isNewLot
-      },
-// 4. UPLOAD (move down)
-{
-  id: 'upload',
-  label: 'Upload',
-  icon: <Upload className="w-4 h-4" />,
-  onClick: () => document.getElementById('photo-upload')?.click(),
-  variant: 'secondary',
-  disabled: isNewLot
-}, 
-      // 5. BACK
+        variant: 'secondary' as const,
+        disabled: false
+      }] : []),
+      // 3. UPLOAD (Always show, label changes based on platform)
+      ...(!isNewLot ? [{
+        id: 'upload',
+        label: platformCapabilities.isWeb ? 'Choose Files' : 'Upload',
+        icon: <Upload className="w-4 h-4" />,
+        onClick: () => document.getElementById('photo-upload')?.click(),
+        variant: 'secondary' as const,
+        disabled: false
+      }] : []),
+      // 4. BACK (Always show)
       {
         id: 'back',
         label: 'Back',
         icon: <ArrowLeft className="w-4 h-4" />,
         onClick: () => navigate(`/sales/${saleId}`),
-        variant: 'secondary'
+        variant: 'secondary' as const
       },
-      // 6. MAGIC (AI Enrich)
-      {
+      // 5. MAGIC/AI (Only when online and has photos)
+      ...(photos.length > 0 && isOnline ? [{
         id: 'ai-enrich',
         label: 'Magic',
         icon: <Sparkles className="w-4 h-4" />,
         onClick: handleAIEnrich,
-        variant: 'ai',
-        disabled: photos.length === 0 || !isOnline
-      },
-      // 7. DELETE
-      {
+        variant: 'ai' as const,
+        disabled: false
+      }] : []),
+      // 6. DELETE (Existing lots only)
+      ...(!isNewLot ? [{
         id: 'delete',
         label: 'Delete',
         icon: <Trash2 className="w-4 h-4" />,
         onClick: handleDelete,
-        variant: 'danger',
-        disabled: isNewLot
-      }
+        variant: 'danger' as const,
+        disabled: false
+      }] : [])
     ]);
 
     return () => clearActions();
@@ -306,43 +308,6 @@ export default function LotDetail() {
       alert('Failed to open camera');
     }
   };
-
-  /**
-  //  * Handle photo selection from gallery
-  //  */
-  // const handlePickFromGallery = async () => {
-  //   if (isNewLot) {
-  //     alert('Please save the lot first before adding photos');
-  //     return;
-  //   }
-
-  //   try {
-  //     const result = await CameraService.pickFromGallery(lotId!);
-      
-  //     if (result.success && result.photoId && result.blobUrl) {
-  //       const newPhoto: Photo = {
-  //         id: result.photoId,
-  //         lot_id: lotId!,
-  //         file_path: `${lotId}/${result.photoId}.jpg`,
-  //         file_name: `Photo_${Date.now()}.jpg`,
-  //         is_primary: photos.length === 0,
-  //         created_at: new Date().toISOString(),
-  //         updated_at: new Date().toISOString(),
-  //       };
-        
-  //       setPhotos([...photos, newPhoto]);
-  //       setPhotoUrls(prev => ({
-  //         ...prev,
-  //         [result.photoId!]: result.blobUrl!
-  //       }));
-  //     } else {
-  //       alert('Failed to select photo: ' + (result.error || 'Unknown error'));
-  //     }
-  //   } catch (error) {
-  //     console.error('Gallery error:', error);
-  //     alert('Failed to open gallery');
-  //   }
-  // };
 
   /**
    * Handle file upload
