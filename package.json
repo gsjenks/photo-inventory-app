@@ -26,6 +26,7 @@
     "@capacitor/network": "^7.0.2",
     "@capacitor/preferences": "^7.0.2",
     "@google/generative-ai": "^0.24.1",
+    "@ionic/pwa-elements": "^3.3.0",
     "@supabase/supabase-js": "^2.77.0",
     "@tailwindcss/postcss": "^4.1.16",
     "idb": "^8.0.3",

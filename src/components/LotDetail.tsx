@@ -598,77 +598,76 @@ export default function LotDetail() {
         </div>
       </div>
 
-      {/* Photos Section */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-gray-900">Photos</h2>
-          <div className="text-sm text-gray-500">
-            {photos.length} photo{photos.length !== 1 ? 's' : ''}
+      {/* Photos Section - Only show after lot is saved */}
+      {!isNewLot && (
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-gray-900">Photos</h2>
+            <div className="text-sm text-gray-500">
+              {photos.length} photo{photos.length !== 1 ? 's' : ''}
+            </div>
           </div>
-        </div>
 
-        {/* Photo Grid */}
-        {photos.length === 0 ? (
-          <div className="text-center py-12 text-gray-500 border-2 border-dashed border-gray-300 rounded-lg">
-            <ImageIcon className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-            <p className="text-sm mb-2">No photos yet</p>
-            <p className="text-xs text-gray-400">
-              {isNewLot 
-                ? 'Save the lot first, then use Camera or Upload to add photos'
-                : 'Use the Camera or Upload button to add photos'
-              }
-            </p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-            {photos.map((photo) => (
-              <div
-                key={photo.id}
-                className="relative group aspect-square rounded-lg overflow-hidden bg-gray-100"
-              >
-                {photoUrls[photo.id] ? (
-                  <img
-                    src={photoUrls[photo.id]}
-                    alt={photo.file_name}
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  <div className="w-full h-full flex items-center justify-center">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600" />
-                  </div>
-                )}
-
-                {/* Primary Badge */}
-                {photo.is_primary && (
-                  <div className="absolute top-2 left-2 bg-indigo-600 text-white px-2 py-1 rounded text-xs font-medium">
-                    Primary
-                  </div>
-                )}
-
-                {/* Action Buttons */}
-                <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  {!photo.is_primary && (
-                    <button
-                      onClick={() => handleSetPrimary(photo)}
-                      className="p-1.5 bg-white rounded-full hover:bg-yellow-50 transition-colors shadow-sm"
-                      title="Set as primary"
-                    >
-                      <Star className="w-4 h-4 text-yellow-400" />
-                    </button>
+          {/* Photo Grid */}
+          {photos.length === 0 ? (
+            <div className="text-center py-12 text-gray-500 border-2 border-dashed border-gray-300 rounded-lg">
+              <ImageIcon className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+              <p className="text-sm mb-2">No photos yet</p>
+              <p className="text-xs text-gray-400">
+                Use the Camera or Upload button to add photos
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+              {photos.map((photo) => (
+                <div
+                  key={photo.id}
+                  className="relative group aspect-square rounded-lg overflow-hidden bg-gray-100"
+                >
+                  {photoUrls[photo.id] ? (
+                    <img
+                      src={photoUrls[photo.id]}
+                      alt={photo.file_name}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600" />
+                    </div>
                   )}
-                  <button
-                    onClick={() => handleDeletePhoto(photo)}
-                    className="p-1.5 bg-white rounded-full hover:bg-red-50 transition-colors shadow-sm"
-                    title="Delete photo"
-                  >
-                    <Trash2 className="w-4 h-4 text-red-600" />
-                  </button>
+
+                  {/* Primary Badge */}
+                  {photo.is_primary && (
+                    <div className="absolute top-2 left-2 bg-indigo-600 text-white px-2 py-1 rounded text-xs font-medium">
+                      Primary
+                    </div>
+                  )}
+
+                  {/* Action Buttons */}
+                  <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {!photo.is_primary && (
+                      <button
+                        onClick={() => handleSetPrimary(photo)}
+                        className="p-1.5 bg-white rounded-full hover:bg-yellow-50 transition-colors shadow-sm"
+                        title="Set as primary"
+                      >
+                        <Star className="w-4 h-4 text-yellow-400" />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleDeletePhoto(photo)}
+                      className="p-1.5 bg-white rounded-full hover:bg-red-50 transition-colors shadow-sm"
+                      title="Delete photo"
+                    >
+                      <Trash2 className="w-4 h-4 text-red-600" />
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Lot Details Form */}
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 space-y-6">
