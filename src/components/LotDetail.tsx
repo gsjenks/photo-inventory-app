@@ -6,6 +6,7 @@ import ConnectivityService from '../services/ConnectivityService';
 import { getNextLotNumber, isTemporaryNumber } from '../services/LotNumberService';
 import offlineStorage from '../services/Offlinestorage';
 import CameraService from '../services/CameraService';
+import CameraModal from './CameraModal';
 import type { Lot, Photo } from '../types';
 import { 
   ArrowLeft, 
@@ -49,6 +50,7 @@ export default function LotDetail() {
   const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [showCameraModal, setShowCameraModal] = useState(false);
   const isNewLot = lotId === 'new';
 
   // Monitor connectivity
@@ -89,7 +91,7 @@ export default function LotDetail() {
     };
   }, [photoUrls]);
 
-  // ✅ UPDATED: Set footer actions in new order: save, camera, upload, back, magic, delete
+  // Set footer actions
   useEffect(() => {
     setActions([
       // 1. SAVE
@@ -265,24 +267,32 @@ export default function LotDetail() {
   };
 
   /**
-   * OPTIMIZED: Instant camera capture with immediate UI update
-   * Photo appears in UI immediately, then saves in background
+   * Open camera modal with full controls
    */
-  const handleCamera = async () => {
+  const handleCamera = () => {
     if (isNewLot) {
       alert('Please save the lot first before adding photos');
       return;
     }
+    
+    // Open camera modal
+    setShowCameraModal(true);
+  };
 
+  /**
+   * Handle photo capture from camera modal
+   */
+  const handleCameraCapture = async (photoData: { base64String: string; format: string }) => {
     try {
-      // INSTANT: Capture and get blob URL immediately
-      const result = await CameraService.captureAndSaveInstant(
+      // Process photo with camera service
+      const result = await CameraService.processCapturedPhoto(
+        photoData,
         lotId!,
         photos.length === 0
       );
       
       if (result.success && result.photoId && result.blobUrl) {
-        // INSTANT: Update UI immediately with new photo
+        // Update UI immediately with new photo
         const newPhoto: Photo = {
           id: result.photoId,
           lot_id: lotId!,
@@ -299,18 +309,19 @@ export default function LotDetail() {
           [result.photoId!]: result.blobUrl!
         }));
 
-        console.log('✅ Photo added to gallery instantly. Syncing in background...');
+        console.log('✅ Photo added to gallery. Saved to device gallery & syncing to cloud...');
       } else if (result.error) {
         console.error('Camera error:', result.error);
+        alert(result.error);
       }
     } catch (error) {
       console.error('Camera error:', error);
-      alert('Failed to access camera');
+      alert('Failed to process photo');
     }
   };
 
   /**
-   * OPTIMIZED: Handle file upload with instant UI update
+   * Handle file upload
    */
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -712,8 +723,8 @@ export default function LotDetail() {
                   type="number"
                   value={lot.quantity || 1}
                   onChange={(e) => setLot({ ...lot, quantity: parseInt(e.target.value) || 1 })}
-                  min="1"
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  min="1"
                 />
               </div>
 
@@ -721,19 +732,13 @@ export default function LotDetail() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Condition
                 </label>
-                <select
+                <input
+                  type="text"
                   value={lot.condition || ''}
                   onChange={(e) => setLot({ ...lot, condition: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                >
-                  <option value="">Select condition</option>
-                  <option value="Excellent">Excellent</option>
-                  <option value="Very Good">Very Good</option>
-                  <option value="Good">Good</option>
-                  <option value="Fair">Fair</option>
-                  <option value="Poor">Poor</option>
-                  <option value="As Is">As Is</option>
-                </select>
+                  placeholder="e.g., Excellent, Good, Fair"
+                />
               </div>
 
               <div>
@@ -765,7 +770,7 @@ export default function LotDetail() {
           </div>
 
           {/* Pricing */}
-          <div className="space-y-4">
+          <div className="space-y-4 mt-6">
             <h2 className="text-lg font-semibold text-gray-900">Pricing</h2>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -837,7 +842,7 @@ export default function LotDetail() {
           </div>
 
           {/* Dimensions */}
-          <div className="space-y-4">
+          <div className="space-y-4 mt-6">
             <h2 className="text-lg font-semibold text-gray-900">Dimensions & Weight</h2>
             
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -900,7 +905,7 @@ export default function LotDetail() {
           </div>
 
           {/* Provenance */}
-          <div className="space-y-4">
+          <div className="space-y-4 mt-6">
             <h2 className="text-lg font-semibold text-gray-900">Provenance</h2>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -916,8 +921,6 @@ export default function LotDetail() {
                   placeholder="e.g., France, England, USA"
                 />
               </div>
-
-
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -961,6 +964,13 @@ export default function LotDetail() {
           </div>
         </div>
       </div>
+
+      {/* Camera Modal with Full Controls */}
+      <CameraModal
+        isOpen={showCameraModal}
+        onClose={() => setShowCameraModal(false)}
+        onCapture={handleCameraCapture}
+      />
     </div>
   );
 }

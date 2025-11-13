@@ -1,11 +1,12 @@
 // services/CameraService.ts
-// MOBILE-FIRST: Instant photo display with background sync to Supabase
-import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
+// Camera service with device gallery save + cloud sync
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Media } from '@capacitor-community/media';
 import offlineStorage from './Offlinestorage';
 import { supabase } from '../lib/supabase';
 import ConnectivityService from './ConnectivityService';
 
-// Simple UUID v4 generator (no external dependencies)
+// Simple UUID v4 generator
 function generateUUID(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
     const r = Math.random() * 16 | 0;
@@ -32,92 +33,38 @@ interface FileUploadResult {
 
 class CameraService {
   /**
-   * Check and request camera permissions (required on mobile)
+   * Process captured photo from camera modal
+   * Saves to device gallery and syncs to cloud
    */
-  private async checkPermissions(): Promise<{ granted: boolean; error?: string }> {
+  async processCapturedPhoto(
+    photoData: { base64String: string; format: string },
+    lotId: string,
+    isPrimary: boolean = false
+  ): Promise<CaptureResult> {
     try {
-      // Check current permissions
-      const permissions = await Camera.checkPermissions();
-      console.log('📸 Camera permissions:', permissions);
-      
-      if (permissions.camera === 'granted' && permissions.photos === 'granted') {
-        return { granted: true };
-      }
-      
-      // Request permissions if not granted
-      console.log('📸 Requesting camera permissions...');
-      const requested = await Camera.requestPermissions();
-      console.log('📸 Permission request result:', requested);
-      
-      if (requested.camera === 'granted' && requested.photos === 'granted') {
-        return { granted: true };
-      }
-      
-      return { 
-        granted: false, 
-        error: 'Camera permissions denied. Please enable camera access in device settings.' 
-      };
-    } catch (error: any) {
-      console.error('Permission check error:', error);
-      return { 
-        granted: false, 
-        error: error.message || 'Failed to check camera permissions' 
-      };
-    }
-  }
+      console.log('📸 Processing captured photo...');
 
-  /**
-   * INSTANT: Capture photo with native camera, save to device gallery, display immediately
-   * BACKGROUND: Sync to Supabase when online
-   */
-  async captureAndSaveInstant(lotId: string, isPrimary: boolean = false): Promise<CaptureResult> {
-    try {
-      console.log('📸 Starting camera capture...');
+      // Convert base64 to blob
+      const blob = this.base64ToBlob(photoData.base64String, photoData.format);
       
-      // Step 0: Check permissions on mobile
-      const permissionCheck = await this.checkPermissions();
-      if (!permissionCheck.granted) {
-        console.error('❌ Camera permission denied');
-        return { 
-          success: false, 
-          error: permissionCheck.error || 'Camera permission required' 
-        };
-      }
-
-      console.log('✅ Camera permissions granted, opening camera...');
-
-      // Step 1: INSTANT - Capture photo (automatically saves to device gallery)
-      const image = await Camera.getPhoto({
-        quality: 90,
-        allowEditing: false,
-        resultType: CameraResultType.Uri,
-        source: CameraSource.Camera,
-        saveToGallery: true,  // ✅ CRITICAL: Saves to device photo gallery
-        correctOrientation: true,
-      });
-
-      console.log('📸 Photo captured:', image.webPath);
-
-      if (!image.webPath) {
-        return { success: false, error: 'No image captured' };
-      }
-
-      // Step 2: INSTANT - Convert to blob for local storage
-      const response = await fetch(image.webPath);
-      const blob = await response.blob();
-      
-      // Step 3: INSTANT - Generate ID and create blob URL for immediate display
+      // Generate IDs
       const photoId = generateUUID();
+      const fileName = `CatalogPro_${Date.now()}.jpg`;
+      
+      // Save to device gallery
+      await this.saveToDeviceGallery(photoData.base64String, fileName);
+      
+      // Create blob URL for immediate display
       const blobUrl = URL.createObjectURL(blob);
 
       console.log('✅ Photo ready for display:', photoId);
 
-      // Step 4: BACKGROUND - Save to IndexedDB (instant, non-blocking)
+      // BACKGROUND - Save to IndexedDB (non-blocking)
       this.savePhotoToIndexedDB(photoId, lotId, blob, isPrimary).catch(err => {
         console.error('Failed to save to IndexedDB:', err);
       });
 
-      // Step 5: BACKGROUND - Sync to Supabase if online (non-blocking)
+      // BACKGROUND - Sync to Supabase if online (non-blocking)
       if (ConnectivityService.getConnectionStatus()) {
         this.syncPhotoToSupabase(photoId, lotId, blob, isPrimary).catch(err => {
           console.error('Failed to sync to Supabase:', err);
@@ -130,17 +77,55 @@ class CameraService {
         blobUrl
       };
     } catch (error: any) {
-      console.error('Camera capture error:', error);
+      console.error('Failed to process photo:', error);
       return {
         success: false,
-        error: error.message || 'Failed to capture photo'
+        error: error.message || 'Failed to process photo'
       };
     }
   }
 
   /**
-   * INSTANT: Handle file input from gallery/upload, display immediately
-   * BACKGROUND: Sync to Supabase when online
+   * Save photo to device gallery using Media plugin
+   */
+  private async saveToDeviceGallery(base64String: string, fileName: string): Promise<void> {
+    try {
+      // First, write to temporary location
+      const savedFile = await Filesystem.writeFile({
+        path: fileName,
+        data: base64String,
+        directory: Directory.Cache
+      });
+
+      // Then save to gallery (without album parameter)
+      await Media.savePhoto({
+        path: savedFile.uri
+      });
+
+      console.log('✅ Photo saved to device gallery');
+    } catch (error) {
+      console.error('Failed to save to gallery:', error);
+      // Don't fail the whole process if gallery save fails
+    }
+  }
+
+  /**
+   * Convert base64 to blob
+   */
+  private base64ToBlob(base64: string, format: string): Blob {
+    const byteString = atob(base64);
+    const arrayBuffer = new ArrayBuffer(byteString.length);
+    const uint8Array = new Uint8Array(arrayBuffer);
+    
+    for (let i = 0; i < byteString.length; i++) {
+      uint8Array[i] = byteString.charCodeAt(i);
+    }
+    
+    return new Blob([arrayBuffer], { type: `image/${format}` });
+  }
+
+  /**
+   * Handle file input from gallery/upload
    */
   async handleFileInput(files: FileList, lotId: string): Promise<FileUploadResult> {
     const result: FileUploadResult = {
@@ -153,7 +138,6 @@ class CameraService {
       const file = files[i];
       
       try {
-        // Step 1: INSTANT - Create blob URL for immediate display
         const blob = new Blob([await file.arrayBuffer()], { type: file.type });
         const photoId = generateUUID();
         const blobUrl = URL.createObjectURL(blob);
@@ -161,13 +145,11 @@ class CameraService {
         result.photos.push({ photoId, blobUrl });
         result.success++;
 
-        // Step 2: BACKGROUND - Save to IndexedDB (non-blocking)
-        const isPrimary = i === 0; // First photo is primary
+        const isPrimary = i === 0;
         this.savePhotoToIndexedDB(photoId, lotId, blob, isPrimary).catch(err => {
           console.error('Failed to save file to IndexedDB:', err);
         });
 
-        // Step 3: BACKGROUND - Sync to Supabase if online (non-blocking)
         if (ConnectivityService.getConnectionStatus()) {
           this.syncPhotoToSupabase(photoId, lotId, blob, isPrimary).catch(err => {
             console.error('Failed to sync file to Supabase:', err);
@@ -183,7 +165,7 @@ class CameraService {
   }
 
   /**
-   * BACKGROUND: Save photo to IndexedDB for offline access
+   * Save photo to IndexedDB for offline access
    */
   private async savePhotoToIndexedDB(
     photoId: string,
@@ -207,7 +189,7 @@ class CameraService {
   }
 
   /**
-   * BACKGROUND: Sync photo to Supabase storage and database
+   * Sync photo to Supabase storage and database
    */
   private async syncPhotoToSupabase(
     photoId: string,
@@ -216,7 +198,6 @@ class CameraService {
     isPrimary: boolean
   ): Promise<void> {
     try {
-      // Upload to Supabase Storage
       const fileName = `${lotId}/${photoId}.jpg`;
       const file = new File([blob], `${photoId}.jpg`, { type: blob.type });
 
@@ -232,7 +213,6 @@ class CameraService {
         return;
       }
 
-      // Save metadata to database
       const { error: dbError } = await supabase
         .from('photos')
         .upsert({
@@ -250,7 +230,6 @@ class CameraService {
         return;
       }
 
-      // Mark as synced in IndexedDB
       const photo = await offlineStorage.getPhoto(photoId);
       if (photo) {
         photo.synced = true;
@@ -260,25 +239,6 @@ class CameraService {
       console.log('✅ Photo synced to Supabase');
     } catch (error) {
       console.error('Supabase sync error:', error);
-    }
-  }
-
-  /**
-   * Select photo from device gallery
-   */
-  async selectFromGallery(): Promise<string | null> {
-    try {
-      const image = await Camera.getPhoto({
-        quality: 90,
-        allowEditing: false,
-        resultType: CameraResultType.Uri,
-        source: CameraSource.Photos
-      });
-
-      return image.webPath || null;
-    } catch (error) {
-      console.error('Gallery selection error:', error);
-      return null;
     }
   }
 
