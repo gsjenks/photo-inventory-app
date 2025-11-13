@@ -32,11 +32,60 @@ interface FileUploadResult {
 
 class CameraService {
   /**
+   * Check and request camera permissions (required on mobile)
+   */
+  private async checkPermissions(): Promise<{ granted: boolean; error?: string }> {
+    try {
+      // Check current permissions
+      const permissions = await Camera.checkPermissions();
+      console.log('📸 Camera permissions:', permissions);
+      
+      if (permissions.camera === 'granted' && permissions.photos === 'granted') {
+        return { granted: true };
+      }
+      
+      // Request permissions if not granted
+      console.log('📸 Requesting camera permissions...');
+      const requested = await Camera.requestPermissions();
+      console.log('📸 Permission request result:', requested);
+      
+      if (requested.camera === 'granted' && requested.photos === 'granted') {
+        return { granted: true };
+      }
+      
+      return { 
+        granted: false, 
+        error: 'Camera permissions denied. Please enable camera access in device settings.' 
+      };
+    } catch (error: any) {
+      console.error('Permission check error:', error);
+      return { 
+        granted: false, 
+        error: error.message || 'Failed to check camera permissions' 
+      };
+    }
+  }
+
+  /**
    * INSTANT: Capture photo with native camera, save to device gallery, display immediately
    * BACKGROUND: Sync to Supabase when online
    */
   async captureAndSaveInstant(lotId: string, isPrimary: boolean = false): Promise<CaptureResult> {
     try {
+      console.log('📸 Starting camera capture...');
+      
+      // Step 0: Check permissions on mobile
+      const permissionCheck = await this.checkPermissions();
+      if (!permissionCheck.granted) {
+        console.error('❌ Camera permission denied');
+        return { 
+          success: false, 
+          error: permissionCheck.error || 'Camera permission required' 
+        };
+      }
+
+      console.log('✅ Camera permissions granted, opening camera...');
+
       // Step 1: INSTANT - Capture photo (automatically saves to device gallery)
       const image = await Camera.getPhoto({
         quality: 90,
@@ -46,6 +95,8 @@ class CameraService {
         saveToGallery: true,  // ✅ CRITICAL: Saves to device photo gallery
         correctOrientation: true,
       });
+
+      console.log('📸 Photo captured:', image.webPath);
 
       if (!image.webPath) {
         return { success: false, error: 'No image captured' };
@@ -58,6 +109,8 @@ class CameraService {
       // Step 3: INSTANT - Generate ID and create blob URL for immediate display
       const photoId = generateUUID();
       const blobUrl = URL.createObjectURL(blob);
+
+      console.log('✅ Photo ready for display:', photoId);
 
       // Step 4: BACKGROUND - Save to IndexedDB (instant, non-blocking)
       this.savePhotoToIndexedDB(photoId, lotId, blob, isPrimary).catch(err => {
