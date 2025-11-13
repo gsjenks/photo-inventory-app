@@ -111,15 +111,6 @@ export default function LotDetail() {
         variant: 'secondary',
         disabled: isNewLot
       },
-// 3. GALLERY (NEW - add after camera)
-{
-  id: 'gallery',
-  label: 'Gallery',
-  icon: <ImageIcon className="w-4 h-4" />,
-  onClick: handlePickFromGallery,
-  variant: 'secondary',
-  disabled: isNewLot
-},
 // 4. UPLOAD (move down)
 {
   id: 'upload',
@@ -317,41 +308,41 @@ export default function LotDetail() {
   };
 
   /**
-   * Handle photo selection from gallery
-   */
-  const handlePickFromGallery = async () => {
-    if (isNewLot) {
-      alert('Please save the lot first before adding photos');
-      return;
-    }
+  //  * Handle photo selection from gallery
+  //  */
+  // const handlePickFromGallery = async () => {
+  //   if (isNewLot) {
+  //     alert('Please save the lot first before adding photos');
+  //     return;
+  //   }
 
-    try {
-      const result = await CameraService.pickFromGallery(lotId!);
+  //   try {
+  //     const result = await CameraService.pickFromGallery(lotId!);
       
-      if (result.success && result.photoId && result.blobUrl) {
-        const newPhoto: Photo = {
-          id: result.photoId,
-          lot_id: lotId!,
-          file_path: `${lotId}/${result.photoId}.jpg`,
-          file_name: `Photo_${Date.now()}.jpg`,
-          is_primary: photos.length === 0,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        };
+  //     if (result.success && result.photoId && result.blobUrl) {
+  //       const newPhoto: Photo = {
+  //         id: result.photoId,
+  //         lot_id: lotId!,
+  //         file_path: `${lotId}/${result.photoId}.jpg`,
+  //         file_name: `Photo_${Date.now()}.jpg`,
+  //         is_primary: photos.length === 0,
+  //         created_at: new Date().toISOString(),
+  //         updated_at: new Date().toISOString(),
+  //       };
         
-        setPhotos([...photos, newPhoto]);
-        setPhotoUrls(prev => ({
-          ...prev,
-          [result.photoId!]: result.blobUrl!
-        }));
-      } else {
-        alert('Failed to select photo: ' + (result.error || 'Unknown error'));
-      }
-    } catch (error) {
-      console.error('Gallery error:', error);
-      alert('Failed to open gallery');
-    }
-  };
+  //       setPhotos([...photos, newPhoto]);
+  //       setPhotoUrls(prev => ({
+  //         ...prev,
+  //         [result.photoId!]: result.blobUrl!
+  //       }));
+  //     } else {
+  //       alert('Failed to select photo: ' + (result.error || 'Unknown error'));
+  //     }
+  //   } catch (error) {
+  //     console.error('Gallery error:', error);
+  //     alert('Failed to open gallery');
+  //   }
+  // };
 
   /**
    * Handle file upload
