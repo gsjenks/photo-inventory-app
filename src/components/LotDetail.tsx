@@ -6,7 +6,6 @@ import ConnectivityService from '../services/ConnectivityService';
 import { getNextLotNumber, isTemporaryNumber } from '../services/LotNumberService';
 import offlineStorage from '../services/Offlinestorage';
 import CameraService from '../services/CameraService';
-import CameraModal from './CameraModal';
 import type { Lot, Photo } from '../types';
 import { 
   ArrowLeft, 
@@ -50,7 +49,6 @@ export default function LotDetail() {
   const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [showCameraModal, setShowCameraModal] = useState(false);
   const isNewLot = lotId === 'new';
 
   // Monitor connectivity
@@ -109,20 +107,29 @@ export default function LotDetail() {
         id: 'camera',
         label: 'Camera',
         icon: <Camera className="w-4 h-4" />,
-        onClick: handleCamera,
+        onClick: handleTakePhoto,
         variant: 'secondary',
         disabled: isNewLot
       },
-      // 3. UPLOAD
-      {
-        id: 'upload',
-        label: 'Upload',
-        icon: <Upload className="w-4 h-4" />,
-        onClick: () => document.getElementById('photo-upload')?.click(),
-        variant: 'secondary',
-        disabled: isNewLot
-      },
-      // 4. BACK
+// 3. GALLERY (NEW - add after camera)
+{
+  id: 'gallery',
+  label: 'Gallery',
+  icon: <ImageIcon className="w-4 h-4" />,
+  onClick: handlePickFromGallery,
+  variant: 'secondary',
+  disabled: isNewLot
+},
+// 4. UPLOAD (move down)
+{
+  id: 'upload',
+  label: 'Upload',
+  icon: <Upload className="w-4 h-4" />,
+  onClick: () => document.getElementById('photo-upload')?.click(),
+  variant: 'secondary',
+  disabled: isNewLot
+}, 
+      // 5. BACK
       {
         id: 'back',
         label: 'Back',
@@ -130,7 +137,7 @@ export default function LotDetail() {
         onClick: () => navigate(`/sales/${saleId}`),
         variant: 'secondary'
       },
-      // 5. MAGIC (AI Enrich)
+      // 6. MAGIC (AI Enrich)
       {
         id: 'ai-enrich',
         label: 'Magic',
@@ -139,7 +146,7 @@ export default function LotDetail() {
         variant: 'ai',
         disabled: photos.length === 0 || !isOnline
       },
-      // 6. DELETE
+      // 7. DELETE
       {
         id: 'delete',
         label: 'Delete',
@@ -267,28 +274,18 @@ export default function LotDetail() {
   };
 
   /**
-   * Open camera modal with full controls
+   * Handle photo capture from native camera
    */
-  const handleCamera = () => {
+  const handleTakePhoto = async () => {
     if (isNewLot) {
       alert('Please save the lot first before adding photos');
       return;
     }
-    
-    // Open camera modal
-    setShowCameraModal(true);
-  };
 
-  /**
-   * Handle photo capture from camera modal
-   */
-  const handleCameraCapture = async (photoData: { base64String: string; format: string }) => {
     try {
-      // Process photo with camera service
-      const result = await CameraService.processCapturedPhoto(
-        photoData,
+      const result = await CameraService.takePhoto(
         lotId!,
-        photos.length === 0
+        photos.length === 0  // First photo is primary
       );
       
       if (result.success && result.photoId && result.blobUrl) {
@@ -302,21 +299,57 @@ export default function LotDetail() {
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
-
-        setPhotos(prev => [...prev, newPhoto]);
+        
+        setPhotos([...photos, newPhoto]);
         setPhotoUrls(prev => ({
           ...prev,
           [result.photoId!]: result.blobUrl!
         }));
 
-        console.log('✅ Photo added to gallery. Saved to device gallery & syncing to cloud...');
-      } else if (result.error) {
-        console.error('Camera error:', result.error);
-        alert(result.error);
+        console.log('✅ Photo added. Saved to device gallery & syncing to cloud...');
+      } else {
+        alert('Failed to take photo: ' + (result.error || 'Unknown error'));
       }
     } catch (error) {
       console.error('Camera error:', error);
-      alert('Failed to process photo');
+      alert('Failed to open camera');
+    }
+  };
+
+  /**
+   * Handle photo selection from gallery
+   */
+  const handlePickFromGallery = async () => {
+    if (isNewLot) {
+      alert('Please save the lot first before adding photos');
+      return;
+    }
+
+    try {
+      const result = await CameraService.pickFromGallery(lotId!);
+      
+      if (result.success && result.photoId && result.blobUrl) {
+        const newPhoto: Photo = {
+          id: result.photoId,
+          lot_id: lotId!,
+          file_path: `${lotId}/${result.photoId}.jpg`,
+          file_name: `Photo_${Date.now()}.jpg`,
+          is_primary: photos.length === 0,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        
+        setPhotos([...photos, newPhoto]);
+        setPhotoUrls(prev => ({
+          ...prev,
+          [result.photoId!]: result.blobUrl!
+        }));
+      } else {
+        alert('Failed to select photo: ' + (result.error || 'Unknown error'));
+      }
+    } catch (error) {
+      console.error('Gallery error:', error);
+      alert('Failed to open gallery');
     }
   };
 
@@ -964,13 +997,6 @@ export default function LotDetail() {
           </div>
         </div>
       </div>
-
-      {/* Camera Modal with Full Controls */}
-      <CameraModal
-        isOpen={showCameraModal}
-        onClose={() => setShowCameraModal(false)}
-        onCapture={handleCameraCapture}
-      />
     </div>
   );
 }

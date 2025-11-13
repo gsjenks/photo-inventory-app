@@ -1,7 +1,6 @@
 // services/CameraService.ts
-// Camera service with device gallery save + cloud sync
-import { Filesystem, Directory } from '@capacitor/filesystem';
-import { Media } from '@capacitor-community/media';
+// Uses native device camera app
+import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 import offlineStorage from './Offlinestorage';
 import { supabase } from '../lib/supabase';
 import ConnectivityService from './ConnectivityService';
@@ -33,31 +32,39 @@ interface FileUploadResult {
 
 class CameraService {
   /**
-   * Process captured photo from camera modal
-   * Saves to device gallery and syncs to cloud
+   * Open native camera app and capture photo
+   * Automatically saves to device gallery
    */
-  async processCapturedPhoto(
-    photoData: { base64String: string; format: string },
-    lotId: string,
-    isPrimary: boolean = false
-  ): Promise<CaptureResult> {
+  async takePhoto(lotId: string, isPrimary: boolean = false): Promise<CaptureResult> {
     try {
-      console.log('📸 Processing captured photo...');
+      console.log('📸 Opening native camera...');
 
-      // Convert base64 to blob
-      const blob = this.base64ToBlob(photoData.base64String, photoData.format);
+      // Open native camera app
+      const image = await Camera.getPhoto({
+        quality: 90,
+        allowEditing: false,
+        resultType: CameraResultType.Base64,
+        source: CameraSource.Camera,
+        saveToGallery: true, // Automatically saves to device gallery
+      });
+
+      if (!image.base64String) {
+        return {
+          success: false,
+          error: 'No photo captured'
+        };
+      }
+
+      // Convert to blob
+      const blob = this.base64ToBlob(image.base64String, image.format);
       
       // Generate IDs
       const photoId = generateUUID();
-      const fileName = `CatalogPro_${Date.now()}.jpg`;
-      
-      // Save to device gallery
-      await this.saveToDeviceGallery(photoData.base64String, fileName);
       
       // Create blob URL for immediate display
       const blobUrl = URL.createObjectURL(blob);
 
-      console.log('✅ Photo ready for display:', photoId);
+      console.log('✅ Photo captured:', photoId);
 
       // BACKGROUND - Save to IndexedDB (non-blocking)
       this.savePhotoToIndexedDB(photoId, lotId, blob, isPrimary).catch(err => {
@@ -77,35 +84,62 @@ class CameraService {
         blobUrl
       };
     } catch (error: any) {
-      console.error('Failed to process photo:', error);
+      console.error('Failed to capture photo:', error);
       return {
         success: false,
-        error: error.message || 'Failed to process photo'
+        error: error.message || 'Failed to capture photo'
       };
     }
   }
 
   /**
-   * Save photo to device gallery using Media plugin
+   * Pick photos from device gallery
    */
-  private async saveToDeviceGallery(base64String: string, fileName: string): Promise<void> {
+  async pickFromGallery(lotId: string): Promise<CaptureResult> {
     try {
-      // First, write to temporary location
-      const savedFile = await Filesystem.writeFile({
-        path: fileName,
-        data: base64String,
-        directory: Directory.Cache
+      console.log('📷 Opening gallery...');
+
+      const image = await Camera.getPhoto({
+        quality: 90,
+        allowEditing: false,
+        resultType: CameraResultType.Base64,
+        source: CameraSource.Photos, // Open gallery picker
       });
 
-      // Then save to gallery (without album parameter)
-      await Media.savePhoto({
-        path: savedFile.uri
+      if (!image.base64String) {
+        return {
+          success: false,
+          error: 'No photo selected'
+        };
+      }
+
+      const blob = this.base64ToBlob(image.base64String, image.format);
+      const photoId = generateUUID();
+      const blobUrl = URL.createObjectURL(blob);
+
+      console.log('✅ Photo selected:', photoId);
+
+      this.savePhotoToIndexedDB(photoId, lotId, blob, false).catch(err => {
+        console.error('Failed to save to IndexedDB:', err);
       });
 
-      console.log('✅ Photo saved to device gallery');
-    } catch (error) {
-      console.error('Failed to save to gallery:', error);
-      // Don't fail the whole process if gallery save fails
+      if (ConnectivityService.getConnectionStatus()) {
+        this.syncPhotoToSupabase(photoId, lotId, blob, false).catch(err => {
+          console.error('Failed to sync to Supabase:', err);
+        });
+      }
+
+      return {
+        success: true,
+        photoId,
+        blobUrl
+      };
+    } catch (error: any) {
+      console.error('Failed to pick photo:', error);
+      return {
+        success: false,
+        error: error.message || 'Failed to pick photo'
+      };
     }
   }
 
@@ -125,7 +159,7 @@ class CameraService {
   }
 
   /**
-   * Handle file input from gallery/upload
+   * Handle file input from web browser
    */
   async handleFileInput(files: FileList, lotId: string): Promise<FileUploadResult> {
     const result: FileUploadResult = {
