@@ -62,6 +62,13 @@ export default function SaleDetail() {
             icon: <Plus className="w-4 h-4" />,
             onClick: () => navigate(`/sales/${saleId}/lots/new`),
             variant: 'primary'
+          },
+          {
+            id: 'back',
+            label: 'Back',
+            icon: <ArrowLeft className="w-4 h-4" />,
+            onClick: () => navigate('/'),
+            variant: 'secondary'
           }
         ]);
         break;
@@ -77,6 +84,13 @@ export default function SaleDetail() {
               if (addButton) addButton.click();
             },
             variant: 'primary'
+          },
+          {
+            id: 'back',
+            label: 'Back',
+            icon: <ArrowLeft className="w-4 h-4" />,
+            onClick: () => navigate('/'),
+            variant: 'secondary'
           }
         ]);
         break;
@@ -92,11 +106,26 @@ export default function SaleDetail() {
               if (addButton) addButton.click();
             },
             variant: 'primary'
+          },
+          {
+            id: 'back',
+            label: 'Back',
+            icon: <ArrowLeft className="w-4 h-4" />,
+            onClick: () => navigate('/'),
+            variant: 'secondary'
           }
         ]);
         break;
       case 'reports':
-        clearActions();
+        setActions([
+          {
+            id: 'back',
+            label: 'Back',
+            icon: <ArrowLeft className="w-4 h-4" />,
+            onClick: () => navigate('/'),
+            variant: 'secondary'
+          }
+        ]);
         break;
       default:
         clearActions();
@@ -475,14 +504,6 @@ export default function SaleDetail() {
     <div className="max-w-7xl mx-auto px-4 py-6 pb-20">
       {/* Header */}
       <div className="mb-6">
-        <button
-          onClick={() => navigate('/dashboard')}
-          className="flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-4 transition-colors"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Back to Dashboard
-        </button>
-        
         <h1 className="text-3xl font-bold text-gray-900">{sale.name}</h1>
         
         <div className="flex items-center gap-4 mt-2 text-sm text-gray-600">

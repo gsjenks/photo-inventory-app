@@ -58,7 +58,7 @@ interface PhotoInventoryDB extends DBSchema {
 class OfflineStorage {
   private db: IDBPDatabase<PhotoInventoryDB> | null = null;
   private readonly DB_NAME = 'PhotoInventoryDB';
-  private readonly DB_VERSION = 3; // Increment version for photoBlobs store
+  private readonly DB_VERSION = 4; // Fixed: Updated to match browser version
 
   async initialize(): Promise<void> {
     this.db = await openDB<PhotoInventoryDB>(this.DB_NAME, this.DB_VERSION, {
@@ -89,7 +89,7 @@ class OfflineStorage {
           photosStore.createIndex('by-lot', 'lot_id');
         }
 
-        // Photo blobs store (new in version 3)
+        // Photo blobs store
         if (!db.objectStoreNames.contains('photoBlobs')) {
           db.createObjectStore('photoBlobs', { keyPath: 'id' });
         }

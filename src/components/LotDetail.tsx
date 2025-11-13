@@ -549,8 +549,8 @@ export default function LotDetail() {
     console.log('AI enrichment not yet implemented');
   };
 
-  const formatPrice = (value: number | undefined) => {
-    return value !== undefined && !isNaN(value) ? String(value) : '';
+  const formatPrice = (value: number | null | undefined) => {
+    return value != null && !isNaN(value) ? String(value) : '';
   };
 
   if (loading) {

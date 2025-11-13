@@ -50,7 +50,7 @@ export default function ContextFooter() {
             )}
           </div>
 
-          {/* Action Buttons - only show if actions exist */}
+          {/* Action Buttons */}
           {actions.length > 0 && (
             <div className="flex items-center gap-2 ml-auto">
               {actions.map((action) => (
