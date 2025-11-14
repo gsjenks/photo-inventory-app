@@ -1,6 +1,8 @@
-@import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-@theme {
+:root {
   /* PhotoInventory Primary Brand Color - Indigo */
   --color-indigo-50: #eef2ff;
   --color-indigo-100: #e0e7ff;
@@ -66,4 +68,49 @@ body {
 #root {
   overscroll-behavior-y: contain;
   position: relative;
+}
+
+/* Safe Area Insets for Mobile Devices */
+/* Ensures content doesn't overlap with device UI (home indicator, notches, etc.) */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  
+  .pt-safe {
+    padding-top: env(safe-area-inset-top);
+  }
+  
+  .pl-safe {
+    padding-left: env(safe-area-inset-left);
+  }
+  
+  .pr-safe {
+    padding-right: env(safe-area-inset-right);
+  }
+}
+
+/* Fallback for browsers that don't support safe-area-inset */
+@supports not (padding-bottom: env(safe-area-inset-bottom)) {
+  .pb-safe {
+    padding-bottom: 20px;
+  }
+  
+  .pt-safe {
+    padding-top: 20px;
+  }
+  
+  .pl-safe {
+    padding-left: 0;
+  }
+  
+  .pr-safe {
+    padding-right: 0;
+  }
+}
+
+/* Add bottom spacing to content to prevent overlap with fixed footer */
+/* Accounts for footer height (64px) + safe area */
+.content-with-footer {
+  padding-bottom: calc(64px + env(safe-area-inset-bottom, 20px));
 }

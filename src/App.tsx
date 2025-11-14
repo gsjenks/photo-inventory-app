@@ -143,12 +143,14 @@ function AppContent() {
   return (
     <div className="min-h-screen bg-gray-50">
       <Header />
-      <Routes>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/sales/:saleId" element={<SaleDetail />} />
-        <Route path="/sales/:saleId/lots/:lotId" element={<LotDetail />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+      <main className="content-with-footer">
+        <Routes>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/sales/:saleId" element={<SaleDetail />} />
+          <Route path="/sales/:saleId/lots/:lotId" element={<LotDetail />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </main>
       <ContextFooter />
     </div>
   );
