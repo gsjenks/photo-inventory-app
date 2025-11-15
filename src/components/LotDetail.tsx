@@ -1,3 +1,6 @@
+// src/components/LotDetail.tsx
+// Lot detail editing with photos and AI enrichment
+
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
@@ -218,44 +221,40 @@ export default function LotDetail() {
         for (const photo of localPhotos) {
           const blob = await offlineStorage.getPhotoBlob(photo.id);
           if (blob) {
-            urls[photo.id] = URL.createObjectURL(blob);
+            const blobUrl = URL.createObjectURL(blob);
+            urls[photo.id] = blobUrl;
           }
         }
       }
 
       // If online, also try loading from Supabase (for synced photos)
       if (isOnline) {
-        const { data, error } = await supabase
+        const { data: remotePhotos, error } = await supabase
           .from('photos')
           .select('*')
           .eq('lot_id', lotId)
-          .order('is_primary', { ascending: false })
           .order('created_at', { ascending: true });
 
-        if (!error && data && data.length > 0) {
-          // Merge with local photos, preferring Supabase data for synced items
-          const photoMap = new Map(photoData.map(p => [p.id, p]));
-          
-          for (const supabasePhoto of data) {
-            photoMap.set(supabasePhoto.id, supabasePhoto);
-            
-            // Try to get URL if not already have one
-            if (!urls[supabasePhoto.id] && supabasePhoto.file_path) {
-              try {
-                const { data: urlData } = await supabase.storage
-                  .from('photos')
-                  .createSignedUrl(supabasePhoto.file_path, 3600);
+        if (error) throw error;
 
-                if (urlData?.signedUrl) {
-                  urls[supabasePhoto.id] = urlData.signedUrl;
-                }
-              } catch (urlError) {
-                console.debug('Could not load URL for photo', supabasePhoto.id);
+        if (remotePhotos && remotePhotos.length > 0) {
+          // Merge remote photos with local photos (avoid duplicates)
+          const localPhotoIds = new Set(photoData.map(p => p.id));
+          const newRemotePhotos = remotePhotos.filter(p => !localPhotoIds.has(p.id));
+          photoData = [...photoData, ...newRemotePhotos];
+
+          // Load URLs for remote photos
+          for (const photo of remotePhotos) {
+            if (!urls[photo.id]) {
+              const { data: urlData } = await supabase.storage
+                .from('photos')
+                .createSignedUrl(photo.file_path, 3600);
+              
+              if (urlData) {
+                urls[photo.id] = urlData.signedUrl;
               }
             }
           }
-          
-          photoData = Array.from(photoMap.values());
         }
       }
 
@@ -266,278 +265,163 @@ export default function LotDetail() {
     }
   };
 
-  /**
-   * Handle photo capture from native camera
-   */
   const handleTakePhoto = async () => {
-    if (isNewLot) {
+    if (!lotId || isNewLot) {
       alert('Please save the lot first before adding photos');
       return;
     }
 
     try {
-      const result = await CameraService.takePhoto(
-        lotId!,
-        photos.length === 0  // First photo is primary
-      );
+      const isPrimary = photos.length === 0;
+      const result = await CameraService.takePhoto(lotId, isPrimary);
       
-      if (result.success && result.photoId && result.blobUrl) {
-        // Update UI immediately with new photo
+      if (!result.success) {
+        alert(result.error || 'Failed to capture photo');
+        return;
+      }
+
+      // CameraService handles everything - just update UI
+      if (result.photoId && result.blobUrl) {
         const newPhoto: Photo = {
           id: result.photoId,
-          lot_id: lotId!,
+          lot_id: lotId,
           file_path: `${lotId}/${result.photoId}.jpg`,
           file_name: `Photo_${Date.now()}.jpg`,
-          is_primary: photos.length === 0,
+          is_primary: isPrimary,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
+          synced: false
         };
-        
-        setPhotos([...photos, newPhoto]);
-        setPhotoUrls(prev => ({
-          ...prev,
-          [result.photoId!]: result.blobUrl!
-        }));
 
-        console.log('✅ Photo added. Saved to device gallery & syncing to cloud...');
-      } else {
-        alert('Failed to take photo: ' + (result.error || 'Unknown error'));
+        setPhotos(prev => [...prev, newPhoto]);
+        setPhotoUrls(prev => ({ ...prev, [result.photoId!]: result.blobUrl! }));
       }
     } catch (error) {
-      console.error('Camera error:', error);
-      alert('Failed to open camera');
+      console.error('Error taking photo:', error);
+      alert('Failed to capture photo');
     }
   };
 
-  /**
-   * Handle file upload
-   */
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
-    if (isNewLot) {
+    if (!lotId || isNewLot) {
       alert('Please save the lot first before adding photos');
+      e.target.value = '';
       return;
     }
 
     try {
-      // INSTANT: Get blob URLs and update UI immediately
-      const result = await CameraService.handleFileInput(files, lotId!);
+      const result = await CameraService.handleFileInput(files, lotId);
       
       if (result.success > 0) {
-        // Create photo metadata for UI
-        const newPhotos: Photo[] = result.photos.map((p, index) => ({
+        // Add photos to state
+        const newPhotos = result.photos.map((p, index) => ({
           id: p.photoId,
-          lot_id: lotId!,
+          lot_id: lotId,
           file_path: `${lotId}/${p.photoId}.jpg`,
-          file_name: files[index].name,
+          file_name: `Photo_${Date.now()}_${index}.jpg`,
           is_primary: photos.length === 0 && index === 0,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
+          synced: false
         }));
 
-        // Create URL map
+        setPhotos(prev => [...prev, ...newPhotos]);
+
         const newUrls: Record<string, string> = {};
         result.photos.forEach(p => {
           newUrls[p.photoId] = p.blobUrl;
         });
-
-        // Update UI immediately
-        setPhotos(prev => [...prev, ...newPhotos]);
         setPhotoUrls(prev => ({ ...prev, ...newUrls }));
-
-        console.log(`✅ ${result.success} photo(s) added instantly. Syncing in background...`);
       }
+
+      if (result.failed > 0) {
+        alert(`${result.failed} file(s) failed to upload`);
+      }
+
+      // Reset input
+      e.target.value = '';
     } catch (error) {
-      console.error('Upload error:', error);
+      console.error('Error uploading photos:', error);
       alert('Failed to upload photos');
+      e.target.value = '';
     }
-
-    // Reset input
-    e.target.value = '';
   };
 
-  // Helper function to convert text to title case
-  const toTitleCase = (str: string) => {
-    return str.toLowerCase().split(' ').map(word => {
-      return word.charAt(0).toUpperCase() + word.slice(1);
-    }).join(' ');
-  };
-
-  const handleSave = async () => {
-    if (!lot.name || !saleId) {
-      alert('Please enter an item name');
-      return;
-    }
-
-    setSaving(true);
+  const handleSetPrimary = async (photoId: string) => {
     try {
-      const lotData = {
-        ...lot,
-        name: toTitleCase(lot.name),
-        sale_id: saleId,
-        updated_at: new Date().toISOString()
-      };
-
-      if (isOnline) {
-        // Save to Supabase
-        if (isNewLot) {
-          const { data, error } = await supabase
-            .from('lots')
-            .insert(lotData)
-            .select()
-            .single();
-
-          if (error) throw error;
-          
-          // Navigate to the new lot's edit page
-          if (data) {
-            navigate(`/sales/${saleId}/lots/${data.id}`, { replace: true });
-          }
-        } else {
-          const { error } = await supabase
-            .from('lots')
-            .update(lotData)
-            .eq('id', lotId);
-
-          if (error) throw error;
-          // Update local state to reflect title case
-          setLot(prev => ({ ...prev, name: toTitleCase(prev.name || '') }));
-        }
-        
-        alert('Item saved successfully');
-      } else {
-        // Save offline
-        if (isNewLot) {
-          // Generate temporary ID
-          const tempId = `temp_lot_${Date.now()}`;
-          const newLot = { ...lotData, id: tempId, created_at: new Date().toISOString() };
-          await offlineStorage.upsertLot(newLot);
-          await offlineStorage.addPendingSyncItem({
-            id: tempId,
-            type: 'create',
-            table: 'lots',
-            data: newLot
-          });
-          navigate(`/sales/${saleId}/lots/${tempId}`, { replace: true });
-        } else {
-          await offlineStorage.upsertLot({ ...lotData, id: lotId });
-          await offlineStorage.addPendingSyncItem({
-            id: lotId!,
-            type: 'update',
-            table: 'lots',
-            data: lotData
-          });
-          // Update local state to reflect title case
-          setLot(prev => ({ ...prev, name: toTitleCase(prev.name || '') }));
-        }
-        
-        alert('Item saved locally (will sync when online)');
-      }
-    } catch (error: any) {
-      console.error('Error saving lot:', error);
-      alert(`Failed to save item: ${error.message}`);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleDelete = async () => {
-    if (isNewLot || !lotId) return;
-
-    if (!confirm(`Delete "${lot.name}"? This will also delete all photos. This cannot be undone.`)) {
-      return;
-    }
-
-    try {
-      if (isOnline) {
-        // Delete photos from storage
-        if (photos.length > 0) {
-          const filePaths = photos.map(p => p.file_path);
-          await supabase.storage.from('photos').remove(filePaths);
-        }
-
-        // Delete from database
-        const { error } = await supabase
-          .from('lots')
-          .delete()
-          .eq('id', lotId);
-
-        if (error) throw error;
-      } else {
-        // Mark for deletion when back online
-        await offlineStorage.addPendingSyncItem({
-          id: lotId,
-          type: 'delete',
-          table: 'lots',
-          data: { id: lotId }
-        });
-      }
-
-      navigate(`/sales/${saleId}`);
-    } catch (error) {
-      console.error('Error deleting lot:', error);
-      alert('Failed to delete item');
-    }
-  };
-
-  const handleSetPrimary = async (photo: Photo) => {
-    try {
-      // Update primary status
+      // Update all photos
       const updatedPhotos = photos.map(p => ({
         ...p,
-        is_primary: p.id === photo.id
+        is_primary: p.id === photoId
       }));
 
-      // Update UI immediately
       setPhotos(updatedPhotos);
 
-      // Update in database
-      if (isOnline) {
-        for (const p of updatedPhotos) {
-          await supabase
-            .from('photos')
-            .update({ is_primary: p.is_primary })
-            .eq('id', p.id);
-        }
+      // Save to offline storage
+      for (const photo of updatedPhotos) {
+        await offlineStorage.upsertPhoto(photo);
       }
 
-      // Update in offline storage
-      for (const p of updatedPhotos) {
-        await offlineStorage.upsertPhoto(p);
+      // Update in Supabase if online
+      if (isOnline) {
+        // Clear all primary flags
+        await supabase
+          .from('photos')
+          .update({ is_primary: false })
+          .eq('lot_id', lotId);
+
+        // Set new primary
+        await supabase
+          .from('photos')
+          .update({ is_primary: true })
+          .eq('id', photoId);
       }
     } catch (error) {
       console.error('Error setting primary photo:', error);
+      alert('Failed to set primary photo');
     }
   };
 
-  const handleDeletePhoto = async (photo: Photo) => {
+  const handleDeletePhoto = async (photoId: string) => {
     if (!confirm('Delete this photo?')) return;
 
     try {
-      // Remove from UI immediately
-      setPhotos(prev => prev.filter(p => p.id !== photo.id));
-      setPhotoUrls(prev => {
-        const newUrls = { ...prev };
-        delete newUrls[photo.id];
-        return newUrls;
-      });
-
-      // Clean up blob URL
-      if (photoUrls[photo.id]?.startsWith('blob:')) {
-        URL.revokeObjectURL(photoUrls[photo.id]);
-      }
-
-      // Delete from storage
-      if (isOnline) {
-        await supabase.storage.from('photos').remove([photo.file_path]);
-        await supabase.from('photos').delete().eq('id', photo.id);
-      }
+      const photo = photos.find(p => p.id === photoId);
+      if (!photo) return;
 
       // Delete from offline storage
-      await offlineStorage.deletePhoto(photo.id);
-      await offlineStorage.deletePhotoBlob(photo.id);
+      await offlineStorage.deletePhoto(photoId);
+
+      // Delete from Supabase if online
+      if (isOnline) {
+        // Delete file from storage
+        await supabase.storage
+          .from('photos')
+          .remove([photo.file_path]);
+
+        // Delete database record
+        await supabase
+          .from('photos')
+          .delete()
+          .eq('id', photoId);
+      }
+
+      // Revoke object URL if exists
+      const url = photoUrls[photoId];
+      if (url && url.startsWith('blob:')) {
+        URL.revokeObjectURL(url);
+      }
+
+      // Update state
+      setPhotos(prev => prev.filter(p => p.id !== photoId));
+      setPhotoUrls(prev => {
+        const updated = { ...prev };
+        delete updated[photoId];
+        return updated;
+      });
     } catch (error) {
       console.error('Error deleting photo:', error);
       alert('Failed to delete photo');
@@ -545,96 +429,300 @@ export default function LotDetail() {
   };
 
   const handleAIEnrich = async () => {
-    // AI enrichment logic here
-    console.log('AI enrichment not yet implemented');
+    if (!isOnline) {
+      alert('AI enrichment requires an internet connection');
+      return;
+    }
+
+    if (photos.length === 0) {
+      alert('Please add photos first');
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      // Get up to 3 photos for AI analysis
+      const photosToAnalyze = photos.slice(0, 3);
+      const photoDataUrls: string[] = [];
+
+      // Convert photos to base64 data URLs
+      for (const photo of photosToAnalyze) {
+        const url = photoUrls[photo.id];
+        if (url) {
+          try {
+            const response = await fetch(url);
+            const blob = await response.blob();
+            const base64 = await new Promise<string>((resolve) => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve(reader.result as string);
+              reader.readAsDataURL(blob);
+            });
+            photoDataUrls.push(base64);
+          } catch (error) {
+            console.error('Error converting photo:', error);
+          }
+        }
+      }
+
+      if (photoDataUrls.length === 0) {
+        throw new Error('No photos available for analysis');
+      }
+
+      // Call Gemini AI API
+      const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              parts: [
+                {
+                  text: `Analyze these auction/estate sale item photos and provide the following information in JSON format:
+{
+  "name": "Concise catalog title (max 100 chars)",
+  "description": "Detailed description including condition, notable features, and any markings",
+  "category": "Item category (e.g., Furniture, Art, Jewelry, Collectibles)",
+  "style": "Style or period (e.g., Victorian, Modern, Art Deco)",
+  "origin": "Country or region of origin if identifiable",
+  "creator": "Maker or artist if identifiable (or 'Unknown')",
+  "materials": "Primary materials used",
+  "estimate_low": estimated low auction value in USD (number only),
+  "estimate_high": estimated high auction value in USD (number only),
+  "starting_bid": suggested starting bid in USD (number only),
+  "height": approximate height in inches (number only),
+  "width": approximate width in inches (number only),
+  "depth": approximate depth in inches (number only),
+  "condition": "Condition assessment (Excellent, Good, Fair, Poor)"
+}
+
+Provide only valid JSON, no additional text.`
+                },
+                ...photoDataUrls.map(dataUrl => ({
+                  inline_data: {
+                    mime_type: 'image/jpeg',
+                    data: dataUrl.split(',')[1]
+                  }
+                }))
+              ]
+            }]
+          })
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error('AI enrichment failed');
+      }
+
+      const data = await response.json();
+      const textResponse = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+      if (!textResponse) {
+        throw new Error('No response from AI');
+      }
+
+      // Parse JSON response
+      const aiData = JSON.parse(textResponse);
+
+      // Update lot with AI-generated data
+      setLot(prev => ({
+        ...prev,
+        name: aiData.name || prev.name,
+        description: aiData.description || prev.description,
+        category: aiData.category || prev.category,
+        style: aiData.style || prev.style,
+        origin: aiData.origin || prev.origin,
+        creator: aiData.creator || prev.creator,
+        materials: aiData.materials || prev.materials,
+        estimate_low: aiData.estimate_low || prev.estimate_low,
+        estimate_high: aiData.estimate_high || prev.estimate_high,
+        starting_bid: aiData.starting_bid || prev.starting_bid,
+        height: aiData.height || prev.height,
+        width: aiData.width || prev.width,
+        depth: aiData.depth || prev.depth,
+        condition: aiData.condition || prev.condition
+      }));
+
+      alert('AI enrichment complete! Review and adjust the suggested values.');
+    } catch (error) {
+      console.error('Error with AI enrichment:', error);
+      alert('AI enrichment failed. Please try again.');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const formatPrice = (value: number | null | undefined) => {
-    return value != null && !isNaN(value) ? String(value) : '';
+  const handleSave = async () => {
+    if (!lot.name) {
+      alert('Please enter a name');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const lotData = {
+        ...lot,
+        sale_id: saleId,
+        updated_at: new Date().toISOString()
+      };
+
+      if (isNewLot) {
+        // Create new lot
+        if (isOnline) {
+          const { data, error } = await supabase
+            .from('lots')
+            .insert(lotData)
+            .select()
+            .single();
+
+          if (error) throw error;
+
+          // Save to offline storage
+          await offlineStorage.upsertLot(data);
+
+          // Navigate to the new lot
+          navigate(`/sales/${saleId}/lots/${data.id}`, { replace: true });
+        } else {
+          // Create offline with temporary ID
+          const tempId = `temp_${Date.now()}`;
+          const offlineLot = {
+            ...lotData,
+            id: tempId,
+            created_at: new Date().toISOString()
+          };
+
+          await offlineStorage.upsertLot(offlineLot);
+          navigate(`/sales/${saleId}/lots/${tempId}`, { replace: true });
+        }
+      } else {
+        // Update existing lot
+        if (isOnline) {
+          const { error } = await supabase
+            .from('lots')
+            .update(lotData)
+            .eq('id', lotId);
+
+          if (error) throw error;
+        }
+
+        // Always save to offline storage
+        await offlineStorage.upsertLot({ ...lotData, id: lotId } as Lot);
+
+        alert('Lot saved successfully');
+      }
+    } catch (error) {
+      console.error('Error saving lot:', error);
+      alert('Failed to save lot');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!confirm('Delete this lot and all its photos?')) return;
+
+    try {
+      // Delete photos first
+      for (const photo of photos) {
+        await handleDeletePhoto(photo.id);
+      }
+
+      // Delete lot from Supabase if online
+      if (isOnline) {
+        const { error } = await supabase
+          .from('lots')
+          .delete()
+          .eq('id', lotId);
+
+        if (error) throw error;
+      }
+
+      // Delete from offline storage
+      if (lotId) {
+        const tx = await offlineStorage['db']!.transaction('lots', 'readwrite');
+        await tx.objectStore('lots').delete(lotId);
+        await tx.done;
+      }
+
+      // Navigate back
+      navigate(`/sales/${saleId}`);
+    } catch (error) {
+      console.error('Error deleting lot:', error);
+      alert('Failed to delete lot');
+    }
+  };
+
+  const formatPrice = (value: number | undefined) => {
+    return value !== undefined ? value : '';
   };
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
+      <div className="flex items-center justify-center min-h-screen">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
       </div>
     );
   }
 
   return (
-    <div className="max-w-4xl mx-auto pb-32">
-      {/* Hidden file input */}
+    <div className="max-w-4xl mx-auto px-4 py-6 pb-24">
+      {/* Hidden file input for photo upload */}
       <input
-        type="file"
         id="photo-upload"
-        multiple
+        type="file"
         accept="image/*"
-        onChange={handleFileUpload}
+        multiple
+        onChange={handlePhotoUpload}
         className="hidden"
       />
 
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center space-x-4">
-          <button
-            onClick={() => navigate(`/sales/${saleId}`)}
-            className="p-2 hover:bg-gray-100 rounded-full transition-colors"
-          >
-            <ArrowLeft className="w-5 h-5 text-gray-600" />
-          </button>
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">
-              {isNewLot ? 'New Item' : 'Edit Item'}
-            </h1>
-            {lot.lot_number && (
-              <p className="text-sm text-gray-500">
-                Lot #{lot.lot_number}
-                {isTemporaryNumber(lot.lot_number) && (
-                  <span className="ml-2 text-yellow-600">(Temporary)</span>
-                )}
-              </p>
-            )}
-          </div>
-        </div>
+      {/* Lot Number Badge */}
+      <div className="mb-4">
+        <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-indigo-100 text-indigo-800">
+          Lot #{lot.lot_number || 'TBD'}
+          {isTemporaryNumber(lot.lot_number) && (
+            <span className="ml-2 text-xs text-indigo-600">(Temporary - will assign on sync)</span>
+          )}
+        </span>
       </div>
 
-      {/* Photos Section - Only show after lot is saved */}
+      {/* Photos Section */}
       {!isNewLot && (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+        <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-gray-900">Photos</h2>
-            <div className="text-sm text-gray-500">
-              {photos.length} photo{photos.length !== 1 ? 's' : ''}
-            </div>
+            <span className="text-sm text-gray-500">{photos.length} photo{photos.length !== 1 ? 's' : ''}</span>
           </div>
 
-          {/* Photo Grid */}
           {photos.length === 0 ? (
-            <div className="text-center py-12 text-gray-500 border-2 border-dashed border-gray-300 rounded-lg">
-              <ImageIcon className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-              <p className="text-sm mb-2">No photos yet</p>
-              <p className="text-xs text-gray-400">
-                Use the Camera or Upload button to add photos
+            <div className="text-center py-12 bg-gray-50 rounded-lg">
+              <ImageIcon className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+              <p className="text-gray-500 mb-4">No photos yet</p>
+              <p className="text-sm text-gray-400">
+                {CameraService.getPlatformCapabilities().supportsNativeCamera 
+                  ? 'Tap Camera button to take photos'
+                  : 'Click Upload to add photos'}
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-              {photos.map((photo) => (
-                <div
-                  key={photo.id}
-                  className="relative group aspect-square rounded-lg overflow-hidden bg-gray-100"
-                >
-                  {photoUrls[photo.id] ? (
-                    <img
-                      src={photoUrls[photo.id]}
-                      alt={photo.file_name}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center">
-                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600" />
-                    </div>
-                  )}
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+              {photos.map(photo => (
+                <div key={photo.id} className="relative group">
+                  <div className="aspect-square bg-gray-100 rounded-lg overflow-hidden">
+                    {photoUrls[photo.id] ? (
+                      <img
+                        src={photoUrls[photo.id]}
+                        alt={photo.file_name}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <ImageIcon className="w-8 h-8 text-gray-400" />
+                      </div>
+                    )}
+                  </div>
 
                   {/* Primary Badge */}
                   {photo.is_primary && (
@@ -647,16 +735,16 @@ export default function LotDetail() {
                   <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     {!photo.is_primary && (
                       <button
-                        onClick={() => handleSetPrimary(photo)}
-                        className="p-1.5 bg-white rounded-full hover:bg-yellow-50 transition-colors shadow-sm"
+                        onClick={() => handleSetPrimary(photo.id)}
+                        className="p-1.5 bg-white rounded-full shadow-md hover:bg-gray-50"
                         title="Set as primary"
                       >
                         <Star className="w-4 h-4 text-yellow-400" />
                       </button>
                     )}
                     <button
-                      onClick={() => handleDeletePhoto(photo)}
-                      className="p-1.5 bg-white rounded-full hover:bg-red-50 transition-colors shadow-sm"
+                      onClick={() => handleDeletePhoto(photo.id)}
+                      className="p-1.5 bg-white rounded-full shadow-md hover:bg-red-50"
                       title="Delete photo"
                     >
                       <Trash2 className="w-4 h-4 text-red-600" />
@@ -670,40 +758,40 @@ export default function LotDetail() {
       )}
 
       {/* Lot Details Form */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 space-y-6">
-        <div>
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Item Details</h2>
-          
+      <div className="bg-white rounded-lg shadow-sm p-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">Item Details</h2>
+
+        <div className="space-y-6">
+          {/* Basic Info */}
           <div className="space-y-4">
-            {/* Basic Info */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Item Name <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={lot.name || ''}
-                  onChange={(e) => setLot({ ...lot, name: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                  placeholder="Enter item name"
-                  required
-                />
-              </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Item Name *
+              </label>
+              <input
+                type="text"
+                value={lot.name || ''}
+                onChange={(e) => setLot({ ...lot, name: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                placeholder="e.g., Victorian Oak Dining Table"
+                required
+              />
+            </div>
 
-              <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Description
-                </label>
-                <textarea
-                  value={lot.description || ''}
-                  onChange={(e) => setLot({ ...lot, description: e.target.value })}
-                  rows={4}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                  placeholder="Detailed description of the item"
-                />
-              </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Description
+              </label>
+              <textarea
+                value={lot.description || ''}
+                onChange={(e) => setLot({ ...lot, description: e.target.value })}
+                rows={4}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                placeholder="Detailed description of the item, including condition, notable features, and markings"
+              />
+            </div>
 
+            <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Quantity
@@ -714,6 +802,7 @@ export default function LotDetail() {
                   onChange={(e) => setLot({ ...lot, quantity: parseInt(e.target.value) || 1 })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
                   min="1"
+                  placeholder="1"
                 />
               </div>
 
@@ -721,15 +810,21 @@ export default function LotDetail() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Condition
                 </label>
-                <input
-                  type="text"
+                <select
                   value={lot.condition || ''}
                   onChange={(e) => setLot({ ...lot, condition: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                  placeholder="e.g., Excellent, Good, Fair"
-                />
+                >
+                  <option value="">Select condition</option>
+                  <option value="Excellent">Excellent</option>
+                  <option value="Good">Good</option>
+                  <option value="Fair">Fair</option>
+                  <option value="Poor">Poor</option>
+                </select>
               </div>
+            </div>
 
+            <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Category
