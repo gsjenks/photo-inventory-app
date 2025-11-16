@@ -1,3 +1,6 @@
+// src/App.tsx
+// FIXED: Password recovery no longer blocks dashboard access after password update
+
 import { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AppProvider, useApp } from './context/AppContext';
@@ -14,7 +17,7 @@ import SyncService from './services/SyncService';
 import { RefreshCw } from 'lucide-react';
 
 function AppContent() {
-  const { user, loading, currentCompany, companySwitched, setCompanySwitched } = useApp();
+  const { user, loading, currentCompany, companySwitched, setCompanySwitched, isPasswordRecovery } = useApp();
   const [syncing, setSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState({ stage: '', current: 0, total: 0 });
   const [syncComplete, setSyncComplete] = useState(false);
@@ -26,6 +29,9 @@ function AppContent() {
     const performSync = async () => {
       // Skip if no user or company
       if (!user || !currentCompany) return;
+
+      // Skip if in password recovery mode
+      if (isPasswordRecovery) return;
 
       // Skip if already synced and company hasn't changed
       if (syncComplete && !companySwitched) return;
@@ -78,7 +84,7 @@ function AppContent() {
         unsubscribe();
       }
     };
-  }, [user, currentCompany, companySwitched]);
+  }, [user, currentCompany, companySwitched, isPasswordRecovery]);
 
   if (loading) {
     return (
@@ -91,7 +97,8 @@ function AppContent() {
     );
   }
 
-  if (!user) {
+  // Show Auth component if no user OR in password recovery mode
+  if (!user || isPasswordRecovery) {
     return <Auth />;
   }
 

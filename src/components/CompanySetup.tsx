@@ -1,208 +1,217 @@
+// src/components/CompanySetup.tsx
+// CORRECTED: Creates company in BOTH companies table AND user_companies join table
+
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useApp } from '../context/AppContext';
-import { Building2, LogOut, ArrowRight, Globe, Ruler, MapPin } from 'lucide-react';
+import { Building2, ArrowRight } from 'lucide-react';
 
 export default function CompanySetup() {
-  const { user, refreshCompanies, signOut } = useApp();
+  const { user, refreshCompanies } = useApp();
   const [loading, setLoading] = useState(false);
-  const [name, setName] = useState('');
-  const [address, setAddress] = useState('');
-  const [currency, setCurrency] = useState('USD');
-  const [units, setUnits] = useState<'metric' | 'imperial'>('imperial');
-  const [error, setError] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [formData, setFormData] = useState({
+    name: '',
+    address: '',
+    currency: 'USD',
+    units: 'imperial',
+  });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    const { data: { session } } = await supabase.auth.getSession();
-    
-    if (!session) {
-      setError('Authentication required. Please sign in again.');
-      return;
-    }
-    
     if (!user) {
-      setError('User data not available. Please refresh the page.');
+      setError('You must be logged in to create a company');
       return;
     }
 
     setLoading(true);
-    setError('');
+    setError(null);
 
     try {
+      console.log('🏢 Creating company:', formData.name);
+
+      // Step 1: Create the company with user_id
       const { data: company, error: companyError } = await supabase
         .from('companies')
-        .insert({
-          name,
-          address,
-          currency,
-          units,
-        })
+        .insert([
+          {
+            name: formData.name,
+            address: formData.address || null,
+            currency: formData.currency,
+            units: formData.units,
+            user_id: user.id, // Set the owner
+          },
+        ])
         .select()
         .single();
 
-      if (companyError) throw companyError;
-
-      const { error: linkError } = await supabase
-        .from('user_companies')
-        .insert({
-          user_id: user.id,
-          company_id: company.id,
-          role: 'owner',
-        });
-
-      if (linkError) throw linkError;
-
-      await refreshCompanies();
-    } catch (err: any) {
-      console.error('Error creating company:', err);
-      
-      let errorMessage = err.message || 'Failed to create company';
-      
-      if (err.code === '42501' || err.message?.includes('row-level security')) {
-        errorMessage = 'Permission error. Please contact support.';
-      } else if (err.message?.includes('duplicate')) {
-        errorMessage = 'A company with this name already exists.';
+      if (companyError) {
+        console.error('❌ Error creating company:', companyError);
+        throw companyError;
       }
-      
-      setError(errorMessage);
-    } finally {
+
+      console.log('✅ Company created:', company.id);
+
+      // Step 2: Create entry in user_companies join table
+      const { error: userCompanyError } = await supabase
+        .from('user_companies')
+        .insert([
+          {
+            user_id: user.id,
+            company_id: company.id,
+            role: 'owner', // User who creates is owner
+          },
+        ]);
+
+      if (userCompanyError) {
+        console.error('❌ Error creating user_company link:', userCompanyError);
+        // This is critical - if this fails, we should clean up the company
+        
+        // Try to delete the company we just created
+        await supabase.from('companies').delete().eq('id', company.id);
+        
+        throw new Error('Failed to link company to user. Please try again.');
+      }
+
+      console.log('✅ User-company link created');
+
+      // Step 3: Refresh companies to load the new one
+      console.log('🔄 Refreshing companies...');
+      await refreshCompanies();
+
+      console.log('✅ Company setup complete!');
+    } catch (err: any) {
+      console.error('❌ Failed to create company:', err);
+      setError(err.message || 'Failed to create company. Please try again.');
       setLoading(false);
     }
+    // Note: Don't setLoading(false) on success - let the app redirect
+  };
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    setFormData({
+      ...formData,
+      [e.target.name]: e.target.value,
+    });
   };
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-indigo-50 to-white">
-      {/* Header with Indigo gradient */}
-      <div className="bg-gradient-to-br from-indigo-600 to-indigo-700 pt-8 pb-32 px-4 relative">
-        {/* Logout button */}
-        <button
-          onClick={signOut}
-          className="absolute top-6 right-6 flex items-center gap-2 px-4 py-2 text-white/90 hover:text-white bg-white/10 hover:bg-white/20 rounded-full transition-all backdrop-blur-sm"
-        >
-          <LogOut className="w-4 h-4" />
-          <span className="font-medium">Sign Out</span>
-        </button>
-
-        <div className="max-w-2xl mx-auto text-center pt-8">
+      {/* Header */}
+      <div className="bg-gradient-to-br from-indigo-600 to-indigo-700 pt-12 pb-32 px-4">
+        <div className="max-w-md mx-auto text-center">
           <div className="inline-flex items-center justify-center w-20 h-20 bg-white rounded-3xl mb-4 shadow-lg">
             <Building2 className="w-10 h-10 text-indigo-600" />
           </div>
           <h1 className="text-4xl font-bold text-white mb-2">
-            Create Your Company
+            Welcome to CatalogListPro!
           </h1>
           <p className="text-indigo-100 text-lg">
-            Let's set up your inventory workspace
+            Let's set up your first company
           </p>
         </div>
       </div>
 
       {/* Form Card */}
-      <div className="max-w-2xl mx-auto px-4 -mt-20">
+      <div className="max-w-md mx-auto px-4 -mt-20">
         <div className="bg-white rounded-3xl shadow-xl p-8">
+          <div className="mb-6">
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">
+              Create Your Company
+            </h2>
+            <p className="text-gray-600">
+              You can add more companies later from settings
+            </p>
+          </div>
+
           {error && (
-            <div className="mb-6 p-4 bg-red-50 text-red-600 rounded-2xl font-medium text-sm">
+            <div className="mb-6 p-4 rounded-2xl text-sm font-medium bg-red-50 text-red-600">
               {error}
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-5">
-            {/* Company Name */}
+          <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label htmlFor="name" className="block text-sm font-semibold text-gray-700 mb-2">
-                Company Name
+              <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-2">
+                Company Name *
               </label>
-              <div className="relative">
-                <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">
-                  <Building2 className="w-5 h-5" />
-                </div>
-                <input
-                  id="name"
-                  type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  required
-                  className="w-full pl-12 pr-4 py-4 bg-gray-50 border-2 border-gray-100 rounded-2xl focus:outline-none focus:border-indigo-600 transition-all text-gray-900 placeholder-gray-400"
-                  placeholder="Acme Auctions"
-                />
-              </div>
+              <input
+                id="name"
+                name="name"
+                type="text"
+                required
+                value={formData.name}
+                onChange={handleChange}
+                className="w-full px-4 py-4 bg-gray-50 border-2 border-gray-100 rounded-2xl focus:outline-none focus:border-indigo-600 transition-all text-gray-900 placeholder-gray-400"
+                placeholder="e.g., ABC Auction House"
+                disabled={loading}
+              />
             </div>
 
-            {/* Address */}
             <div>
-              <label htmlFor="address" className="block text-sm font-semibold text-gray-700 mb-2">
-                Address <span className="text-gray-400 font-normal">(Optional)</span>
+              <label htmlFor="address" className="block text-sm font-medium text-gray-700 mb-2">
+                Address (Optional)
               </label>
-              <div className="relative">
-                <div className="absolute left-4 top-4 text-gray-400">
-                  <MapPin className="w-5 h-5" />
-                </div>
-                <textarea
-                  id="address"
-                  value={address}
-                  onChange={(e) => setAddress(e.target.value)}
-                  rows={3}
-                  className="w-full pl-12 pr-4 py-4 bg-gray-50 border-2 border-gray-100 rounded-2xl focus:outline-none focus:border-indigo-600 transition-all text-gray-900 placeholder-gray-400 resize-none"
-                  placeholder="123 Main St, City, State, ZIP"
-                />
+              <input
+                id="address"
+                name="address"
+                type="text"
+                value={formData.address}
+                onChange={handleChange}
+                className="w-full px-4 py-4 bg-gray-50 border-2 border-gray-100 rounded-2xl focus:outline-none focus:border-indigo-600 transition-all text-gray-900 placeholder-gray-400"
+                placeholder="123 Main St, City, State ZIP"
+                disabled={loading}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label htmlFor="currency" className="block text-sm font-medium text-gray-700 mb-2">
+                  Currency
+                </label>
+                <select
+                  id="currency"
+                  name="currency"
+                  value={formData.currency}
+                  onChange={handleChange}
+                  className="w-full px-4 py-4 bg-gray-50 border-2 border-gray-100 rounded-2xl focus:outline-none focus:border-indigo-600 transition-all text-gray-900"
+                  disabled={loading}
+                >
+                  <option value="USD">USD ($)</option>
+                  <option value="EUR">EUR (€)</option>
+                  <option value="GBP">GBP (£)</option>
+                  <option value="CAD">CAD ($)</option>
+                  <option value="AUD">AUD ($)</option>
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="units" className="block text-sm font-medium text-gray-700 mb-2">
+                  Units
+                </label>
+                <select
+                  id="units"
+                  name="units"
+                  value={formData.units}
+                  onChange={handleChange}
+                  className="w-full px-4 py-4 bg-gray-50 border-2 border-gray-100 rounded-2xl focus:outline-none focus:border-indigo-600 transition-all text-gray-900"
+                  disabled={loading}
+                >
+                  <option value="imperial">Imperial</option>
+                  <option value="metric">Metric</option>
+                </select>
               </div>
             </div>
 
-            {/* Settings Row */}
-            <div className="bg-gray-50 rounded-2xl p-6 space-y-4">
-              <h3 className="font-semibold text-gray-900 text-sm mb-4">Preferences</h3>
-              
-              <div className="grid grid-cols-2 gap-4">
-                {/* Currency */}
-                <div>
-                  <label htmlFor="currency" className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-2">
-                    <Globe className="w-4 h-4 text-indigo-600" />
-                    Currency
-                  </label>
-                  <select
-                    id="currency"
-                    value={currency}
-                    onChange={(e) => setCurrency(e.target.value)}
-                    className="w-full px-4 py-3 bg-white border-2 border-gray-100 rounded-xl focus:outline-none focus:border-indigo-600 transition-all text-gray-900 cursor-pointer"
-                  >
-                    <option value="USD">🇺🇸 USD ($)</option>
-                    <option value="EUR">🇪🇺 EUR (€)</option>
-                    <option value="GBP">🇬🇧 GBP (£)</option>
-                    <option value="JPY">🇯🇵 JPY (¥)</option>
-                    <option value="CAD">🇨🇦 CAD ($)</option>
-                  </select>
-                </div>
-
-                {/* Units */}
-                <div>
-                  <label htmlFor="units" className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-2">
-                    <Ruler className="w-4 h-4 text-indigo-600" />
-                    Units
-                  </label>
-                  <select
-                    id="units"
-                    value={units}
-                    onChange={(e) => setUnits(e.target.value as 'metric' | 'imperial')}
-                    className="w-full px-4 py-3 bg-white border-2 border-gray-100 rounded-xl focus:outline-none focus:border-indigo-600 transition-all text-gray-900 cursor-pointer"
-                  >
-                    <option value="imperial">📏 Imperial</option>
-                    <option value="metric">📐 Metric</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            {/* Submit Button */}
             <button
               type="submit"
-              disabled={loading}
-              className="w-full bg-gradient-to-r from-indigo-600 to-indigo-700 text-white py-4 rounded-2xl font-bold hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center gap-2 mt-8"
+              disabled={loading || !formData.name.trim()}
+              className="w-full bg-gradient-to-r from-indigo-600 to-indigo-700 text-white py-4 rounded-2xl font-bold hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center gap-2 mt-6"
             >
               {loading ? (
                 <div className="flex items-center gap-2">
                   <div className="w-5 h-5 border-3 border-white/30 border-t-white rounded-full animate-spin" />
-                  <span>Creating...</span>
+                  <span>Creating Company...</span>
                 </div>
               ) : (
                 <>
@@ -213,14 +222,10 @@ export default function CompanySetup() {
             </button>
           </form>
 
-          {/* Helper Text */}
-          <p className="text-center text-sm text-gray-500 mt-6">
-            You can invite team members and customize settings later
+          <p className="text-center text-xs text-gray-500 mt-6">
+            Signed in as: <strong>{user?.email}</strong>
           </p>
         </div>
-
-        {/* Bottom spacing */}
-        <div className="h-12" />
       </div>
     </div>
   );
