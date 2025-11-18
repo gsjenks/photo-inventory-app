@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react';
+// src/components/LotsList.tsx
+// Displays lot cards with quantity field above category
+
 import { useNavigate } from 'react-router-dom';
 import type { Lot } from '../types';
-import { Package, Edit, Trash2, Image, Star } from 'lucide-react';
+import { Edit2, Trash2, Package } from 'lucide-react';
+import { useState } from 'react';
 import { supabase } from '../lib/supabase';
-import offlineStorage from '../services/Offlinestorage';
-import LotViewModal from './Lotviewmodal';
 
 interface LotsListProps {
   lots: Lot[];
@@ -14,126 +15,50 @@ interface LotsListProps {
 
 export default function LotsList({ lots, saleId, onRefresh }: LotsListProps) {
   const navigate = useNavigate();
-  const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
-  const [selectedLot, setSelectedLot] = useState<Lot | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
 
-  // Load primary photos for all lots
-  useEffect(() => {
-    if (lots?.length > 0) {
-      loadPrimaryPhotos();
-    } else {
-      setPhotoUrls({});
-    }
-  }, [lots]);
-
-  // Cleanup object URLs on unmount to prevent memory leaks
-  useEffect(() => {
-    return () => {
-      Object.values(photoUrls).forEach(url => {
-        if (url.startsWith('blob:')) {
-          URL.revokeObjectURL(url);
-        }
-      });
-    };
-  }, [photoUrls]);
-
-  const loadPrimaryPhotos = async () => {
-    if (!lots?.length) return;
-
-    try {
-      const urls: Record<string, string> = {};
-      
-      for (const lot of lots) {
-        if (!lot?.id) continue;
-
-        // Try loading from IndexedDB first (for local/offline photos)
-        const localPhotos = await offlineStorage.getPhotosByLot(lot.id);
-        const primaryLocal = localPhotos.find(p => p.is_primary);
-        
-        if (primaryLocal) {
-          const blob = await offlineStorage.getPhotoBlob(primaryLocal.id);
-          if (blob) {
-            urls[lot.id] = URL.createObjectURL(blob);
-            continue;
-          }
-        }
-
-        // If not found locally, try Supabase
-        try {
-          const { data: photos, error: photosError } = await supabase
-            .from('photos')
-            .select('*')
-            .eq('lot_id', lot.id)
-            .eq('is_primary', true)
-            .limit(1);
-
-          if (photosError) {
-            console.debug('Photos query error for lot', lot.id, ':', photosError);
-            continue;
-          }
-
-          if (photos && photos.length > 0) {
-            const photo = photos[0];
-            
-            if (!photo.file_path) {
-              console.debug(`No file_path for photo ${photo.id}`);
-              continue;
-            }
-
-            try {
-              const { data: urlData, error: storageError } = await supabase.storage
-                .from('photos')
-                .createSignedUrl(photo.file_path, 3600);
-
-              if (storageError) {
-                console.debug('Storage URL error for lot', lot.id, ':', storageError.message);
-                continue;
-              }
-
-              if (urlData?.signedUrl) {
-                urls[lot.id] = urlData.signedUrl;
-              }
-            } catch (urlError) {
-              console.debug('URL creation failed for lot', lot.id, ':', urlError);
-            }
-          }
-        } catch (supabaseError) {
-          console.debug('Supabase photo fetch failed for lot', lot.id, ':', supabaseError);
-        }
-      }
-      
-      setPhotoUrls(urls);
-    } catch (error) {
-      console.error('Error loading primary photos:', error);
-    }
+  const handleEdit = (lotId: string) => {
+    navigate(`/sales/${saleId}/lots/${lotId}`);
   };
 
   const handleDelete = async (lot: Lot) => {
-    if (!confirm(`Delete lot "${lot.name}"?`)) {
+    if (!window.confirm(`Delete lot #${lot.lot_number}? This cannot be undone.`)) {
       return;
     }
 
+    setDeleting(lot.id);
     try {
+      // Delete associated photos from storage
+      const { data: photos } = await supabase
+        .from('photos')
+        .select('file_path')
+        .eq('lot_id', lot.id);
+
+      if (photos && photos.length > 0) {
+        const filePaths = photos.map(p => p.file_path);
+        await supabase.storage.from('photos').remove(filePaths);
+      }
+
+      // Delete lot
       const { error } = await supabase
         .from('lots')
         .delete()
         .eq('id', lot.id);
 
       if (error) throw error;
+
       onRefresh();
     } catch (error) {
       console.error('Error deleting lot:', error);
       alert('Failed to delete lot');
+    } finally {
+      setDeleting(null);
     }
   };
 
-  const formatPrice = (price?: number) => {
-    if (!price) return '-';
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 0,
-    }).format(price);
+  const formatCurrency = (value: number | null | undefined) => {
+    if (value === null || value === undefined) return '';
+    return `$${value.toLocaleString()}`;
   };
 
   const formatDimensions = (lot: Lot) => {
@@ -141,164 +66,146 @@ export default function LotsList({ lots, saleId, onRefresh }: LotsListProps) {
     if (lot.height) parts.push(`H: ${lot.height}"`);
     if (lot.width) parts.push(`W: ${lot.width}"`);
     if (lot.depth) parts.push(`D: ${lot.depth}"`);
-    return parts.length > 0 ? parts.join(' × ') : '-';
+    
+    let result = parts.join(' × ');
+    
+    if (lot.weight) {
+      result += ` • ${lot.weight} lbs`;
+    }
+    
+    return result || 'Not specified';
   };
 
-  const formatWeight = (weight?: number) => {
-    if (!weight) return '-';
-    return `${weight} lbs`;
-  };
+  if (lots.length === 0) {
+    return (
+      <div className="text-center py-12 bg-white rounded-lg border border-gray-200">
+        <Package className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+        <p className="text-gray-500 text-lg mb-2">No items yet</p>
+        <p className="text-gray-400 text-sm">
+          Add your first item to get started
+        </p>
+      </div>
+    );
+  }
 
   return (
-    <div>
-      {!lots?.length ? (
-        <div className="flex flex-col items-center justify-center py-12 text-gray-500">
-          <Package className="w-12 h-12 text-gray-400 mb-4" />
-          <p className="text-sm text-gray-600 mb-4">No items yet</p>
-          <p className="text-xs text-gray-500">Use the "New Item" button at the bottom to add your first item</p>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {lots.map((lot) => (
-            <div
-              key={lot.id}
-              className="bg-white border border-gray-200 rounded-lg overflow-hidden hover:shadow-lg transition-shadow group relative"
-            >
-              {/* Action buttons - Top Right, above image */}
-              <div className="absolute top-4 right-40 flex items-center gap-1 z-10">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    navigate(`/sales/${saleId}/lots/${lot.id}`);
-                  }}
-                  className="p-1.5 rounded-full bg-white hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-all shadow-sm border border-gray-200"
-                  aria-label="Edit lot"
-                >
-                  <Edit className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDelete(lot);
-                  }}
-                  className="p-1.5 rounded-full bg-white hover:bg-gray-100 text-gray-400 hover:text-red-600 transition-all shadow-sm border border-gray-200"
-                  aria-label="Delete lot"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+    <div className="space-y-6">
+      {lots.map((lot) => (
+        <div
+          key={lot.id}
+          className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow"
+        >
+          <div className="flex items-start gap-6">
+            {/* Left side - Details */}
+            <div className="flex-1 min-w-0">
+              {/* Lot Number */}
+              <div className="mb-2">
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800">
+                  LOT #{lot.lot_number || 'TBD'}
+                </span>
               </div>
 
-              <div className="p-4">
-                {/* Main Content Container - Flex Row */}
-                <div className="flex gap-4">
-                  {/* Left Side - Lot Details */}
-                  <div className="flex-1">
-                    {/* Lot Header */}
-                    <div className="mb-3">
-                      {/* Lot Number */}
-                      {lot.lot_number && (
-                        <p className="text-sm font-bold text-indigo-600 mb-1">
-                          LOT #{lot.lot_number}
-                        </p>
-                      )}
-                      {/* Lot Name */}
-                      <h3 
-                        onClick={() => setSelectedLot(lot)}
-                        className="text-lg font-semibold text-gray-900 hover:text-indigo-600 transition-colors mb-2 cursor-pointer capitalize"
-                      >
-                        {lot.name}
-                      </h3>
-                    </div>
+              {/* Title */}
+              <h3 className="text-xl font-semibold text-gray-900 mb-4">
+                {lot.name}
+              </h3>
 
-                    {/* Details Grid - REDUCED METADATA */}
-                    <div 
-                      className="grid grid-cols-2 gap-4 cursor-pointer"
-                      onClick={() => setSelectedLot(lot)}
-                    >
-                      {/* Estimate Range */}
-                      <div>
-                        <p className="text-xs font-medium text-gray-500 mb-1">Estimate</p>
-                        <p className="text-sm font-semibold text-gray-900">
-                          {formatPrice(lot.estimate_low)} - {formatPrice(lot.estimate_high)}
-                        </p>
-                      </div>
-
-                      {/* Starting Bid */}
-                      <div>
-                        <p className="text-xs font-medium text-gray-500 mb-1">Starting Bid</p>
-                        <p className="text-sm font-semibold text-gray-900">
-                          {formatPrice(lot.starting_bid)}
-                        </p>
-                      </div>
-
-                      {/* Dimensions & Weight - Combined */}
-                      <div className="col-span-2">
-                        <p className="text-xs font-medium text-gray-500 mb-1">Dimensions & Weight</p>
-                        <p className="text-sm font-semibold text-gray-900">
-                          {formatDimensions(lot)} • {formatWeight(lot.weight)}
-                        </p>
-                      </div>
-
-                      {/* Category */}
-                      <div className="col-span-2">
-                        <p className="text-xs font-medium text-gray-500 mb-1">Category</p>
-                        {lot.category ? (
-                          <span className="inline-block px-2 py-1 bg-indigo-100 text-indigo-700 rounded text-xs font-medium">
-                            {lot.category}
-                          </span>
-                        ) : (
-                          <span className="text-sm text-gray-400">-</span>
-                        )}
-                      </div>
-                    </div>
+              {/* Pricing Grid */}
+              <div className="grid grid-cols-2 gap-4 mb-4">
+                <div>
+                  <div className="text-sm text-gray-500 mb-1">Estimate</div>
+                  <div className="text-lg font-semibold text-gray-900">
+                    {lot.estimate_low && lot.estimate_high ? (
+                      `${formatCurrency(lot.estimate_low)} - ${formatCurrency(lot.estimate_high)}`
+                    ) : lot.estimate_low ? (
+                      formatCurrency(lot.estimate_low)
+                    ) : (
+                      <span className="text-gray-400 text-sm">Not set</span>
+                    )}
                   </div>
+                </div>
 
-                  {/* Right Side - Primary Photo Thumbnail */}
-                  <div className="flex-shrink-0">
-                    <div 
-                      className="w-32 h-32 bg-gray-100 flex items-center justify-center relative p-2 rounded cursor-pointer hover:bg-gray-200 transition-colors"
-                      onClick={() => setSelectedLot(lot)}
-                    >
-                      {photoUrls[lot.id] ? (
-                        <img 
-                          src={photoUrls[lot.id]} 
-                          alt={lot.name}
-                          className="max-w-full max-h-full object-contain"
-                        />
-                      ) : (
-                        <Image className="w-12 h-12 text-gray-400" />
-                      )}
-                      
-                      {/* Featured badge */}
-                      {(lot as any).is_featured && (
-                        <div className="absolute -top-1 -right-1">
-                          <Star className="w-5 h-5 text-yellow-400 fill-yellow-400" />
-                        </div>
-                      )}
-                    </div>
+                <div>
+                  <div className="text-sm text-gray-500 mb-1">Starting Bid</div>
+                  <div className="text-lg font-semibold text-gray-900">
+                    {lot.starting_bid ? (
+                      formatCurrency(lot.starting_bid)
+                    ) : (
+                      <span className="text-gray-400 text-sm">Not set</span>
+                    )}
                   </div>
                 </div>
               </div>
-            </div>
-          ))}
-        </div>
-      )}
 
-      {/* Lot View Modal */}
-      {selectedLot && (
-        <LotViewModal
-          lot={selectedLot}
-          saleId={saleId}
-          onClose={() => {
-            setSelectedLot(null);
-            loadPrimaryPhotos();
-          }}
-          onDelete={() => {
-            setSelectedLot(null);
-            onRefresh();
-          }}
-        />
-      )}
+              {/* Dimensions & Weight */}
+              <div className="mb-4">
+                <div className="text-sm text-gray-500 mb-1">Dimensions & Weight</div>
+                <div className="text-base font-medium text-gray-900">
+                  {formatDimensions(lot)}
+                </div>
+              </div>
+
+              {/* QUANTITY - NEW FIELD ADDED HERE */}
+              {lot.quantity && lot.quantity > 1 && (
+                <div className="mb-4">
+                  <div className="text-sm text-gray-500 mb-1">Quantity</div>
+                  <div className="inline-flex items-center gap-2">
+                    <Package className="w-4 h-4 text-gray-600" />
+                    <span className="text-base font-semibold text-gray-900">
+                      {lot.quantity} {lot.quantity === 1 ? 'item' : 'items'}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Category */}
+              {lot.category && (
+                <div>
+                  <div className="text-sm text-gray-500 mb-1">Category</div>
+                  <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-indigo-50 text-indigo-700">
+                    {lot.category}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Right side - Image & Actions */}
+            <div className="flex flex-col items-end gap-3">
+              {/* Action Buttons */}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleEdit(lot.id)}
+                  className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                  title="Edit item"
+                >
+                  <Edit2 className="w-5 h-5" />
+                </button>
+                
+                <button
+                  onClick={() => handleDelete(lot)}
+                  disabled={deleting === lot.id}
+                  className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Delete item"
+                >
+                  {deleting === lot.id ? (
+                    <div className="animate-spin rounded-full h-5 w-5 border-2 border-red-600 border-t-transparent"></div>
+                  ) : (
+                    <Trash2 className="w-5 h-5" />
+                  )}
+                </button>
+              </div>
+
+              {/* Primary Photo */}
+              <div className="w-40 h-40 bg-gray-100 rounded-lg overflow-hidden flex-shrink-0">
+                {/* TODO: Add photo display when photo service is connected */}
+                <div className="w-full h-full flex items-center justify-center">
+                  <Package className="w-12 h-12 text-gray-300" />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
