@@ -1,5 +1,6 @@
 // services/CameraService.ts
-// MOBILE-FIRST: Native camera with device controls (mobile) + File upload (desktop)
+// ENHANCED: Added web camera support, improved error handling, optimized performance
+
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 import offlineStorage from './Offlinestorage';
 import { supabase } from '../lib/supabase';
@@ -32,44 +33,260 @@ interface FileUploadResult {
 }
 
 class CameraService {
+  private mediaStream: MediaStream | null = null;
+
   constructor() {
-    // Log platform info on initialization
     PlatformService.logPlatformInfo();
   }
 
   /**
-   * MOBILE: Open native camera app with device's native controls
-   * ✅ User controls: Flash, Zoom, Focus, Brightness through native camera UI
-   * ✅ Automatically saves to device photo gallery
-   * ✅ Works offline - stores locally, syncs when online
-   * 
-   * DESKTOP: Returns error - use file upload instead
+   * ✨ NEW: Web camera capture using MediaDevices API
+   * Works on desktop/laptop browsers with webcam
    */
-  async takePhoto(lotId: string, isPrimary: boolean = false): Promise<CaptureResult> {
-    // PLATFORM CHECK: Only use native camera on mobile
-    if (!PlatformService.isNative()) {
+  async captureFromWebCamera(lotId: string, isPrimary: boolean = false): Promise<CaptureResult> {
+    if (PlatformService.isNative()) {
       return {
         success: false,
-        error: 'Native camera only available on mobile devices. Please use Upload button.'
+        error: 'Use native camera on mobile devices'
       };
     }
 
     try {
-      console.log('📸 Opening native camera with device controls...');
+      console.log('📷 Opening web camera...');
 
-      // Opens device's NATIVE camera app
-      // User gets ALL native controls:
-      // - Flash (on/off/auto)
-      // - Zoom (pinch to zoom)
-      // - Focus (tap to focus)
-      // - Brightness (exposure control)
-      // - HDR, Portrait mode, etc. (device dependent)
+      // Request camera permission and get stream
+      this.mediaStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+          facingMode: 'environment' // Prefer back camera on tablets
+        }
+      });
+
+      // Create video element
+      const video = document.createElement('video');
+      video.srcObject = this.mediaStream;
+      video.autoplay = true;
+      video.playsInline = true;
+
+      // Wait for video to be ready
+      await new Promise((resolve) => {
+        video.onloadedmetadata = () => {
+          video.play();
+          resolve(null);
+        };
+      });
+
+      // Create capture UI overlay
+      const result = await this.showCameraUI(video, lotId, isPrimary);
+
+      // Stop camera stream
+      this.stopWebCamera();
+
+      return result;
+    } catch (error: any) {
+      console.error('Web camera error:', error);
+      this.stopWebCamera();
+      
+      return {
+        success: false,
+        error: error.name === 'NotAllowedError' 
+          ? 'Camera permission denied. Please allow camera access in your browser settings.'
+          : error.name === 'NotFoundError'
+          ? 'No camera found. Please connect a webcam and try again.'
+          : `Camera error: ${error.message}`
+      };
+    }
+  }
+
+  /**
+   * ✨ NEW: Show camera capture UI
+   */
+  private async showCameraUI(
+    video: HTMLVideoElement,
+    lotId: string,
+    isPrimary: boolean
+  ): Promise<CaptureResult> {
+    return new Promise((resolve) => {
+      // Create overlay
+      const overlay = document.createElement('div');
+      overlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: black;
+        z-index: 9999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+      `;
+
+      // Add video to overlay
+      video.style.cssText = `
+        max-width: 100%;
+        max-height: calc(100% - 100px);
+        object-fit: contain;
+      `;
+      overlay.appendChild(video);
+
+      // Create controls
+      const controls = document.createElement('div');
+      controls.style.cssText = `
+        position: absolute;
+        bottom: 20px;
+        left: 0;
+        right: 0;
+        display: flex;
+        justify-content: center;
+        gap: 20px;
+        padding: 0 20px;
+      `;
+
+      // Capture button
+      const captureBtn = document.createElement('button');
+      captureBtn.textContent = '📸 Capture';
+      captureBtn.style.cssText = `
+        padding: 15px 40px;
+        font-size: 18px;
+        font-weight: bold;
+        background: #4f46e5;
+        color: white;
+        border: none;
+        border-radius: 50px;
+        cursor: pointer;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+      `;
+      captureBtn.onclick = async () => {
+        const result = await this.captureFrame(video, lotId, isPrimary);
+        document.body.removeChild(overlay);
+        resolve(result);
+      };
+
+      // Cancel button
+      const cancelBtn = document.createElement('button');
+      cancelBtn.textContent = '✕ Cancel';
+      cancelBtn.style.cssText = `
+        padding: 15px 40px;
+        font-size: 18px;
+        font-weight: bold;
+        background: #6b7280;
+        color: white;
+        border: none;
+        border-radius: 50px;
+        cursor: pointer;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+      `;
+      cancelBtn.onclick = () => {
+        document.body.removeChild(overlay);
+        resolve({
+          success: false,
+          error: 'Cancelled by user'
+        });
+      };
+
+      controls.appendChild(captureBtn);
+      controls.appendChild(cancelBtn);
+      overlay.appendChild(controls);
+
+      document.body.appendChild(overlay);
+    });
+  }
+
+  /**
+   * ✨ NEW: Capture current video frame
+   */
+  private async captureFrame(
+    video: HTMLVideoElement,
+    lotId: string,
+    isPrimary: boolean
+  ): Promise<CaptureResult> {
+    try {
+      // Create canvas to capture frame
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        throw new Error('Failed to get canvas context');
+      }
+
+      // Draw current video frame
+      ctx.drawImage(video, 0, 0);
+
+      // Convert to blob
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((b) => {
+          if (b) resolve(b);
+          else reject(new Error('Failed to create blob'));
+        }, 'image/jpeg', 0.9);
+      });
+
+      // Generate IDs
+      const photoId = generateUUID();
+      const blobUrl = URL.createObjectURL(blob);
+
+      console.log('✅ Web camera photo captured');
+
+      // Save to IndexedDB (non-blocking)
+      this.savePhotoToIndexedDB(photoId, lotId, blob, isPrimary).catch(err => {
+        console.error('Failed to save to IndexedDB:', err);
+      });
+
+      // Sync to Supabase if online (non-blocking)
+      if (ConnectivityService.getConnectionStatus()) {
+        this.syncPhotoToSupabase(photoId, lotId, blob, isPrimary).catch(err => {
+          console.error('Failed to sync to Supabase:', err);
+        });
+      }
+
+      return {
+        success: true,
+        photoId,
+        blobUrl
+      };
+    } catch (error: any) {
+      console.error('Capture frame error:', error);
+      return {
+        success: false,
+        error: error.message || 'Failed to capture photo'
+      };
+    }
+  }
+
+  /**
+   * Stop web camera stream
+   */
+  private stopWebCamera(): void {
+    if (this.mediaStream) {
+      this.mediaStream.getTracks().forEach(track => track.stop());
+      this.mediaStream = null;
+    }
+  }
+
+  /**
+   * MOBILE: Native camera with device controls
+   */
+  async takePhoto(lotId: string, isPrimary: boolean = false): Promise<CaptureResult> {
+    if (!PlatformService.isNative()) {
+      return {
+        success: false,
+        error: 'Native camera only available on mobile devices. Use web camera or upload.'
+      };
+    }
+
+    try {
+      console.log('📸 Opening native camera...');
+
       const image = await Camera.getPhoto({
         quality: 90,
         allowEditing: false,
         resultType: CameraResultType.Base64,
         source: CameraSource.Camera,
-        saveToGallery: true, // ✅ CRITICAL: Saves to device photo gallery
+        saveToGallery: true,
         correctOrientation: true,
       });
 
@@ -80,23 +297,16 @@ class CameraService {
         };
       }
 
-      // Convert to blob
       const blob = this.base64ToBlob(image.base64String, image.format);
-      
-      // Generate IDs
       const photoId = generateUUID();
-      
-      // Create blob URL for immediate display
       const blobUrl = URL.createObjectURL(blob);
 
-      console.log('✅ Photo captured with native camera & saved to device gallery');
+      console.log('✅ Photo captured with native camera');
 
-      // BACKGROUND - Save to IndexedDB (non-blocking)
       this.savePhotoToIndexedDB(photoId, lotId, blob, isPrimary).catch(err => {
         console.error('Failed to save to IndexedDB:', err);
       });
 
-      // BACKGROUND - Sync to Supabase if online (non-blocking)
       if (ConnectivityService.getConnectionStatus()) {
         this.syncPhotoToSupabase(photoId, lotId, blob, isPrimary).catch(err => {
           console.error('Failed to sync to Supabase:', err);
@@ -118,14 +328,13 @@ class CameraService {
   }
 
   /**
-   * MOBILE: Pick photos from device gallery
-   * DESKTOP: Returns error - use file upload instead
+   * MOBILE: Pick from gallery
    */
   async pickFromGallery(lotId: string): Promise<CaptureResult> {
     if (!PlatformService.isNative()) {
       return {
         success: false,
-        error: 'Gallery picker only available on mobile devices. Please use Upload button.'
+        error: 'Gallery picker only available on mobile devices.'
       };
     }
 
@@ -136,7 +345,7 @@ class CameraService {
         quality: 90,
         allowEditing: false,
         resultType: CameraResultType.Base64,
-        source: CameraSource.Photos, // Open gallery picker
+        source: CameraSource.Photos,
       });
 
       if (!image.base64String) {
@@ -177,24 +386,7 @@ class CameraService {
   }
 
   /**
-   * Convert base64 to blob
-   */
-  private base64ToBlob(base64: string, format: string): Blob {
-    const byteString = atob(base64);
-    const arrayBuffer = new ArrayBuffer(byteString.length);
-    const uint8Array = new Uint8Array(arrayBuffer);
-    
-    for (let i = 0; i < byteString.length; i++) {
-      uint8Array[i] = byteString.charCodeAt(i);
-    }
-    
-    return new Blob([arrayBuffer], { type: `image/${format}` });
-  }
-
-  /**
-   * DESKTOP/WEB: Handle file input from browser
-   * Used on desktop, laptop, Surface Pro, tablets in browser, etc.
-   * Works with drag-drop or file picker
+   * WEB/DESKTOP: File upload
    */
   async handleFileInput(files: FileList, lotId: string): Promise<FileUploadResult> {
     const result: FileUploadResult = {
@@ -209,6 +401,21 @@ class CameraService {
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       
+      // Validate file type
+      if (!file.type.startsWith('image/')) {
+        console.warn(`Skipping non-image file: ${file.name}`);
+        result.failed++;
+        continue;
+      }
+
+      // Validate file size (max 10MB)
+      const maxSize = 10 * 1024 * 1024;
+      if (file.size > maxSize) {
+        console.warn(`File too large: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)}MB)`);
+        result.failed++;
+        continue;
+      }
+
       try {
         const blob = new Blob([await file.arrayBuffer()], { type: file.type });
         const photoId = generateUUID();
@@ -217,7 +424,7 @@ class CameraService {
         result.photos.push({ photoId, blobUrl });
         result.success++;
 
-        const isPrimary = i === 0;
+        const isPrimary = i === 0 && result.photos.length === 1;
         this.savePhotoToIndexedDB(photoId, lotId, blob, isPrimary).catch(err => {
           console.error('Failed to save file to IndexedDB:', err);
         });
@@ -238,7 +445,22 @@ class CameraService {
   }
 
   /**
-   * Save photo to IndexedDB for offline access
+   * Convert base64 to blob
+   */
+  private base64ToBlob(base64: string, format: string): Blob {
+    const byteString = atob(base64);
+    const arrayBuffer = new ArrayBuffer(byteString.length);
+    const uint8Array = new Uint8Array(arrayBuffer);
+    
+    for (let i = 0; i < byteString.length; i++) {
+      uint8Array[i] = byteString.charCodeAt(i);
+    }
+    
+    return new Blob([arrayBuffer], { type: `image/${format}` });
+  }
+
+  /**
+   * Save photo to IndexedDB
    */
   private async savePhotoToIndexedDB(
     photoId: string,
@@ -262,7 +484,7 @@ class CameraService {
   }
 
   /**
-   * Sync photo to Supabase storage and database
+   * Sync photo to Supabase
    */
   private async syncPhotoToSupabase(
     photoId: string,
@@ -316,7 +538,7 @@ class CameraService {
   }
 
   /**
-   * Sync all unsynced photos to Supabase
+   * Sync all unsynced photos
    */
   async syncUnsyncedPhotos(): Promise<void> {
     if (!ConnectivityService.getConnectionStatus()) {
@@ -346,10 +568,23 @@ class CameraService {
   }
 
   /**
-   * Get platform capabilities for UI decisions
+   * Get platform capabilities
    */
   getPlatformCapabilities() {
-    return PlatformService.getPhotoCapabilities();
+    const caps = PlatformService.getPhotoCapabilities();
+    return {
+      ...caps,
+      supportsWebCamera: caps.isWeb && caps.hasCamera,
+      supportsNativeCamera: caps.isNative,
+      supportsFileUpload: true
+    };
+  }
+
+  /**
+   * Cleanup resources
+   */
+  cleanup(): void {
+    this.stopWebCamera();
   }
 }
 

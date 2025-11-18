@@ -1,7 +1,8 @@
 // src/components/LotDetail.tsx
-// Lot detail editing with photos and AI enrichment
+// UPDATED: Added webcam support for desktop browsers
+// Mobile: Uses native camera, Desktop: Uses getUserMedia webcam interface
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useFooter } from '../context/FooterContext';
@@ -18,14 +19,27 @@ import {
   Camera, 
   Sparkles,
   Star,
-  Image as ImageIcon
+  Image as ImageIcon,
+  X,
+  RotateCcw,
+  Check
 } from 'lucide-react';
+
+// Simple UUID generator
+function generateUUID(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
 
 export default function LotDetail() {
   const { saleId, lotId } = useParams<{ saleId: string; lotId: string }>();
   const navigate = useNavigate();
   const { setActions, clearActions } = useFooter();
   const [isOnline, setIsOnline] = useState(ConnectivityService.getConnectionStatus());
+  const [showCameraModal, setShowCameraModal] = useState(false);
   const [lot, setLot] = useState<Partial<Lot>>({
     name: '',
     description: '',
@@ -81,7 +95,7 @@ export default function LotDetail() {
     }
   }, [lotId, isNewLot]);
 
-  // Cleanup object URLs on unmount to prevent memory leaks
+  // Cleanup object URLs on unmount
   useEffect(() => {
     return () => {
       Object.values(photoUrls).forEach(url => {
@@ -92,12 +106,9 @@ export default function LotDetail() {
     };
   }, [photoUrls]);
 
-  // Set footer actions - UPDATED WITH PLATFORM DETECTION
+  // Set footer actions
   useEffect(() => {
-    const platformCapabilities = CameraService.getPlatformCapabilities();
-    
     setActions([
-      // 1. SAVE (Always show)
       {
         id: 'save',
         label: isNewLot ? 'Create Item' : 'Save Changes',
@@ -107,8 +118,7 @@ export default function LotDetail() {
         disabled: !lot.name || saving,
         loading: saving
       },
-      // 2. CAMERA (Mobile only - native camera with device controls)
-      ...(platformCapabilities.supportsNativeCamera && !isNewLot ? [{
+      ...(!isNewLot ? [{
         id: 'camera',
         label: 'Camera',
         icon: <Camera className="w-4 h-4" />,
@@ -116,16 +126,14 @@ export default function LotDetail() {
         variant: 'secondary' as const,
         disabled: false
       }] : []),
-      // 3. UPLOAD (Always show, label changes based on platform)
       ...(!isNewLot ? [{
         id: 'upload',
-        label: platformCapabilities.isWeb ? 'Choose Files' : 'Upload',
+        label: 'Choose Files',
         icon: <Upload className="w-4 h-4" />,
         onClick: () => document.getElementById('photo-upload')?.click(),
         variant: 'secondary' as const,
         disabled: false
       }] : []),
-      // 4. BACK (Always show)
       {
         id: 'back',
         label: 'Back',
@@ -133,7 +141,6 @@ export default function LotDetail() {
         onClick: () => navigate(`/sales/${saleId}`),
         variant: 'secondary' as const
       },
-      // 5. MAGIC/AI (Only when online and has photos)
       ...(photos.length > 0 && isOnline ? [{
         id: 'ai-enrich',
         label: 'Magic',
@@ -142,7 +149,6 @@ export default function LotDetail() {
         variant: 'ai' as const,
         disabled: false
       }] : []),
-      // 6. DELETE (Existing lots only)
       ...(!isNewLot ? [{
         id: 'delete',
         label: 'Delete',
@@ -176,7 +182,6 @@ export default function LotDetail() {
 
     setLoading(true);
     try {
-      // Try to load from Supabase first if online
       if (isOnline) {
         const { data, error } = await supabase
           .from('lots')
@@ -187,11 +192,9 @@ export default function LotDetail() {
         if (error) throw error;
         if (data) {
           setLot(data);
-          // Also cache locally
           await offlineStorage.upsertLot(data);
         }
       } else {
-        // Load from offline storage
         const offlineLot = await offlineStorage.getLot(lotId);
         if (offlineLot) {
           setLot(offlineLot);
@@ -212,12 +215,10 @@ export default function LotDetail() {
       let photoData: Photo[] = [];
       const urls: Record<string, string> = {};
 
-      // Try loading from IndexedDB first (for local/offline photos)
       const localPhotos = await offlineStorage.getPhotosByLot(lotId);
       if (localPhotos && localPhotos.length > 0) {
         photoData = localPhotos;
         
-        // Create object URLs from blobs stored in IndexedDB
         for (const photo of localPhotos) {
           const blob = await offlineStorage.getPhotoBlob(photo.id);
           if (blob) {
@@ -227,7 +228,6 @@ export default function LotDetail() {
         }
       }
 
-      // If online, also try loading from Supabase (for synced photos)
       if (isOnline) {
         const { data: remotePhotos, error } = await supabase
           .from('photos')
@@ -238,12 +238,10 @@ export default function LotDetail() {
         if (error) throw error;
 
         if (remotePhotos && remotePhotos.length > 0) {
-          // Merge remote photos with local photos (avoid duplicates)
           const localPhotoIds = new Set(photoData.map(p => p.id));
           const newRemotePhotos = remotePhotos.filter(p => !localPhotoIds.has(p.id));
           photoData = [...photoData, ...newRemotePhotos];
 
-          // Load URLs for remote photos
           for (const photo of remotePhotos) {
             if (!urls[photo.id]) {
               const { data: urlData } = await supabase.storage
@@ -271,34 +269,101 @@ export default function LotDetail() {
       return;
     }
 
+    const platformCapabilities = CameraService.getPlatformCapabilities();
+    
+    if (platformCapabilities.isNative) {
+      // NATIVE: Use Capacitor Camera
+      try {
+        const isPrimary = photos.length === 0;
+        const result = await CameraService.takePhoto(lotId, isPrimary);
+        
+        if (!result.success) {
+          alert(result.error || 'Failed to capture photo');
+          return;
+        }
+
+        if (result.photoId && result.blobUrl) {
+          const newPhoto: Photo = {
+            id: result.photoId,
+            lot_id: lotId,
+            file_path: `${lotId}/${result.photoId}.jpg`,
+            file_name: `Photo_${Date.now()}.jpg`,
+            is_primary: isPrimary,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            synced: false
+          };
+
+          setPhotos(prev => [...prev, newPhoto]);
+          setPhotoUrls(prev => ({ ...prev, [result.photoId!]: result.blobUrl! }));
+        }
+      } catch (error) {
+        console.error('Error taking photo:', error);
+        alert('Failed to capture photo');
+      }
+    } else {
+      // WEB: Show webcam modal
+      setShowCameraModal(true);
+    }
+  };
+
+  const handleCaptureFromWebcam = async (blob: Blob) => {
+    if (!lotId) return;
+
     try {
+      const photoId = generateUUID();
       const isPrimary = photos.length === 0;
-      const result = await CameraService.takePhoto(lotId, isPrimary);
-      
-      if (!result.success) {
-        alert(result.error || 'Failed to capture photo');
-        return;
+      const blobUrl = URL.createObjectURL(blob);
+
+      // Save to IndexedDB
+      const photoMetadata: Photo = {
+        id: photoId,
+        lot_id: lotId,
+        file_path: `${lotId}/${photoId}.jpg`,
+        file_name: `Webcam_${Date.now()}.jpg`,
+        is_primary: isPrimary,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        synced: false
+      };
+
+      await offlineStorage.savePhoto(photoMetadata, blob);
+
+      // Update UI
+      setPhotos(prev => [...prev, photoMetadata]);
+      setPhotoUrls(prev => ({ ...prev, [photoId]: blobUrl }));
+
+      // Sync to Supabase if online (background)
+      if (isOnline) {
+        setTimeout(async () => {
+          try {
+            const file = new File([blob], `${photoId}.jpg`, { type: blob.type });
+            const { error: uploadError } = await supabase.storage
+              .from('photos')
+              .upload(`${lotId}/${photoId}.jpg`, file, { upsert: true });
+
+            if (!uploadError) {
+              await supabase.from('photos').upsert({
+                id: photoId,
+                lot_id: lotId,
+                file_path: `${lotId}/${photoId}.jpg`,
+                file_name: photoMetadata.file_name,
+                is_primary: isPrimary,
+              });
+
+              photoMetadata.synced = true;
+              await offlineStorage.updatePhoto(photoMetadata);
+            }
+          } catch (err) {
+            console.error('Background sync failed:', err);
+          }
+        }, 1000);
       }
 
-      // CameraService handles everything - just update UI
-      if (result.photoId && result.blobUrl) {
-        const newPhoto: Photo = {
-          id: result.photoId,
-          lot_id: lotId,
-          file_path: `${lotId}/${result.photoId}.jpg`,
-          file_name: `Photo_${Date.now()}.jpg`,
-          is_primary: isPrimary,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          synced: false
-        };
-
-        setPhotos(prev => [...prev, newPhoto]);
-        setPhotoUrls(prev => ({ ...prev, [result.photoId!]: result.blobUrl! }));
-      }
+      setShowCameraModal(false);
     } catch (error) {
-      console.error('Error taking photo:', error);
-      alert('Failed to capture photo');
+      console.error('Error saving webcam photo:', error);
+      alert('Failed to save photo');
     }
   };
 
@@ -316,7 +381,6 @@ export default function LotDetail() {
       const result = await CameraService.handleFileInput(files, lotId);
       
       if (result.success > 0) {
-        // Add photos to state
         const newPhotos = result.photos.map((p, index) => ({
           id: p.photoId,
           lot_id: lotId,
@@ -341,7 +405,6 @@ export default function LotDetail() {
         alert(`${result.failed} file(s) failed to upload`);
       }
 
-      // Reset input
       e.target.value = '';
     } catch (error) {
       console.error('Error uploading photos:', error);
@@ -352,7 +415,6 @@ export default function LotDetail() {
 
   const handleSetPrimary = async (photoId: string) => {
     try {
-      // Update all photos
       const updatedPhotos = photos.map(p => ({
         ...p,
         is_primary: p.id === photoId
@@ -360,20 +422,16 @@ export default function LotDetail() {
 
       setPhotos(updatedPhotos);
 
-      // Save to offline storage
       for (const photo of updatedPhotos) {
         await offlineStorage.upsertPhoto(photo);
       }
 
-      // Update in Supabase if online
       if (isOnline) {
-        // Clear all primary flags
         await supabase
           .from('photos')
           .update({ is_primary: false })
           .eq('lot_id', lotId);
 
-        // Set new primary
         await supabase
           .from('photos')
           .update({ is_primary: true })
@@ -386,42 +444,28 @@ export default function LotDetail() {
   };
 
   const handleDeletePhoto = async (photoId: string) => {
-    if (!confirm('Delete this photo?')) return;
+    if (!window.confirm('Delete this photo?')) return;
 
     try {
-      const photo = photos.find(p => p.id === photoId);
-      if (!photo) return;
+      setPhotos(prev => prev.filter(p => p.id !== photoId));
 
-      // Delete from offline storage
+      if (photoUrls[photoId] && photoUrls[photoId].startsWith('blob:')) {
+        URL.revokeObjectURL(photoUrls[photoId]);
+      }
+      
+      const newUrls = { ...photoUrls };
+      delete newUrls[photoId];
+      setPhotoUrls(newUrls);
+
       await offlineStorage.deletePhoto(photoId);
 
-      // Delete from Supabase if online
       if (isOnline) {
-        // Delete file from storage
-        await supabase.storage
-          .from('photos')
-          .remove([photo.file_path]);
-
-        // Delete database record
-        await supabase
-          .from('photos')
-          .delete()
-          .eq('id', photoId);
+        const photo = photos.find(p => p.id === photoId);
+        if (photo) {
+          await supabase.storage.from('photos').remove([photo.file_path]);
+          await supabase.from('photos').delete().eq('id', photoId);
+        }
       }
-
-      // Revoke object URL if exists
-      const url = photoUrls[photoId];
-      if (url && url.startsWith('blob:')) {
-        URL.revokeObjectURL(url);
-      }
-
-      // Update state
-      setPhotos(prev => prev.filter(p => p.id !== photoId));
-      setPhotoUrls(prev => {
-        const updated = { ...prev };
-        delete updated[photoId];
-        return updated;
-      });
     } catch (error) {
       console.error('Error deleting photo:', error);
       alert('Failed to delete photo');
@@ -429,126 +473,112 @@ export default function LotDetail() {
   };
 
   const handleAIEnrich = async () => {
-    if (!isOnline) {
-      alert('AI enrichment requires an internet connection');
+    if (photos.length === 0) {
+      alert('Add at least one photo to use AI enrichment');
       return;
     }
 
-    if (photos.length === 0) {
-      alert('Please add photos first');
+    if (!isOnline) {
+      alert('AI enrichment requires an internet connection');
       return;
     }
 
     try {
       setSaving(true);
 
-      // Get up to 3 photos for AI analysis
       const photosToAnalyze = photos.slice(0, 3);
-      const photoDataUrls: string[] = [];
+      const photoBlobs: Blob[] = [];
 
-      // Convert photos to base64 data URLs
       for (const photo of photosToAnalyze) {
-        const url = photoUrls[photo.id];
-        if (url) {
-          try {
-            const response = await fetch(url);
-            const blob = await response.blob();
-            const base64 = await new Promise<string>((resolve) => {
-              const reader = new FileReader();
-              reader.onloadend = () => resolve(reader.result as string);
-              reader.readAsDataURL(blob);
-            });
-            photoDataUrls.push(base64);
-          } catch (error) {
-            console.error('Error converting photo:', error);
-          }
+        const blob = await offlineStorage.getPhotoBlob(photo.id);
+        if (blob) {
+          photoBlobs.push(blob);
         }
       }
 
-      if (photoDataUrls.length === 0) {
-        throw new Error('No photos available for analysis');
+      if (photoBlobs.length === 0) {
+        alert('No photos available for analysis');
+        return;
       }
 
-      // Call Gemini AI API
-      const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{
-              parts: [
-                {
-                  text: `Analyze these auction/estate sale item photos and provide the following information in JSON format:
-{
-  "name": "Concise catalog title (max 100 chars)",
-  "description": "Detailed description including condition, notable features, and any markings",
-  "category": "Item category (e.g., Furniture, Art, Jewelry, Collectibles)",
-  "style": "Style or period (e.g., Victorian, Modern, Art Deco)",
-  "origin": "Country or region of origin if identifiable",
-  "creator": "Maker or artist if identifiable (or 'Unknown')",
-  "materials": "Primary materials used",
-  "estimate_low": estimated low auction value in USD (number only),
-  "estimate_high": estimated high auction value in USD (number only),
-  "starting_bid": suggested starting bid in USD (number only),
-  "height": approximate height in inches (number only),
-  "width": approximate width in inches (number only),
-  "depth": approximate depth in inches (number only),
-  "condition": "Condition assessment (Excellent, Good, Fair, Poor)"
-}
-
-Provide only valid JSON, no additional text.`
-                },
-                ...photoDataUrls.map(dataUrl => ({
-                  inline_data: {
-                    mime_type: 'image/jpeg',
-                    data: dataUrl.split(',')[1]
-                  }
-                }))
-              ]
-            }]
-          })
-        }
+      // Convert blobs to base64 for Gemini API
+      const base64Photos = await Promise.all(
+        photoBlobs.map(blob => new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const base64 = (reader.result as string).split(',')[1];
+            resolve(base64);
+          };
+          reader.readAsDataURL(blob);
+        }))
       );
 
+      // Call Gemini API
+      const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + import.meta.env.VITE_GEMINI_API_KEY, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              { text: `Analyze these ${photoBlobs.length} photos of an auction item and provide detailed information in JSON format:
+
+{
+  "title": "Catalog title (100 chars max)",
+  "description": "Detailed description including condition (200+ words)",
+  "category": "Item category",
+  "style": "Style/period",
+  "origin": "Country/region of origin",
+  "creator": "Maker/artist (if identifiable)",
+  "materials": "Materials used",
+  "dimensions_estimate": "Estimated dimensions (H x W x D)",
+  "estimate_low": Estimated low value in USD,
+  "estimate_high": Estimated high value in USD,
+  "starting_bid": Suggested starting bid in USD,
+  "condition": "Condition report"
+}` },
+              ...base64Photos.map(data => ({
+                inline_data: { mime_type: 'image/jpeg', data }
+              }))
+            ]
+          }]
+        })
+      });
+
       if (!response.ok) {
-        throw new Error('AI enrichment failed');
+        throw new Error('AI analysis failed');
       }
 
-      const data = await response.json();
-      const textResponse = data.candidates?.[0]?.content?.parts?.[0]?.text;
-
-      if (!textResponse) {
-        throw new Error('No response from AI');
+      const result = await response.json();
+      const text = result.candidates[0].content.parts[0].text;
+      
+      // Extract JSON from response
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        throw new Error('Failed to parse AI response');
       }
 
-      // Parse JSON response
-      const aiData = JSON.parse(textResponse);
+      const aiData = JSON.parse(jsonMatch[0]);
 
-      // Update lot with AI-generated data
+      // Update lot with AI data
       setLot(prev => ({
         ...prev,
-        name: aiData.name || prev.name,
+        name: aiData.title || prev.name,
         description: aiData.description || prev.description,
         category: aiData.category || prev.category,
         style: aiData.style || prev.style,
         origin: aiData.origin || prev.origin,
         creator: aiData.creator || prev.creator,
         materials: aiData.materials || prev.materials,
+        condition: aiData.condition || prev.condition,
         estimate_low: aiData.estimate_low || prev.estimate_low,
         estimate_high: aiData.estimate_high || prev.estimate_high,
         starting_bid: aiData.starting_bid || prev.starting_bid,
-        height: aiData.height || prev.height,
-        width: aiData.width || prev.width,
-        depth: aiData.depth || prev.depth,
-        condition: aiData.condition || prev.condition
       }));
 
-      alert('AI enrichment complete! Review and adjust the suggested values.');
+      alert('✨ AI enrichment complete! Review and save changes.');
     } catch (error) {
-      console.error('Error with AI enrichment:', error);
-      alert('AI enrichment failed. Please try again.');
+      console.error('AI enrichment error:', error);
+      alert('Failed to enrich data with AI');
     } finally {
       setSaving(false);
     }
@@ -556,121 +586,114 @@ Provide only valid JSON, no additional text.`
 
   const handleSave = async () => {
     if (!lot.name) {
-      alert('Please enter a name');
+      alert('Please enter an item name');
       return;
     }
 
     setSaving(true);
     try {
-      const lotData = {
-        ...lot,
-        sale_id: saleId,
-        updated_at: new Date().toISOString()
-      };
-
       if (isNewLot) {
         // Create new lot
+        const newLot = {
+          ...lot,
+          sale_id: saleId,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+
+        const newId = generateUUID();
+        newLot.id = newId;
+
+        // Save locally first
+        await offlineStorage.upsertLot(newLot);
+
+        // Save to Supabase if online
         if (isOnline) {
-          const { data, error } = await supabase
-            .from('lots')
-            .insert(lotData)
-            .select()
-            .single();
-
+          const { error } = await supabase.from('lots').insert(newLot);
           if (error) throw error;
-
-          // Save to offline storage
-          await offlineStorage.upsertLot(data);
-
-          // Navigate to the new lot
-          navigate(`/sales/${saleId}/lots/${data.id}`, { replace: true });
-        } else {
-          // Create offline with temporary ID
-          const tempId = `temp_${Date.now()}`;
-          const offlineLot = {
-            ...lotData,
-            id: tempId,
-            created_at: new Date().toISOString()
-          };
-
-          await offlineStorage.upsertLot(offlineLot);
-          navigate(`/sales/${saleId}/lots/${tempId}`, { replace: true });
         }
+
+        // Navigate to edit mode
+        navigate(`/sales/${saleId}/lots/${newId}`, { replace: true });
       } else {
         // Update existing lot
+        const updatedLot = {
+          ...lot,
+          updated_at: new Date().toISOString()
+        };
+
+        setLot(updatedLot);
+
+        await offlineStorage.upsertLot(updatedLot);
+
         if (isOnline) {
           const { error } = await supabase
             .from('lots')
-            .update(lotData)
+            .update(updatedLot)
             .eq('id', lotId);
 
           if (error) throw error;
         }
 
-        // Always save to offline storage
-        await offlineStorage.upsertLot({ ...lotData, id: lotId } as Lot);
-
-        alert('Lot saved successfully');
+        alert('✅ Item saved successfully');
       }
     } catch (error) {
       console.error('Error saving lot:', error);
-      alert('Failed to save lot');
+      alert('Failed to save item');
     } finally {
       setSaving(false);
     }
   };
 
   const handleDelete = async () => {
-    if (!confirm('Delete this lot and all its photos?')) return;
+    if (!window.confirm('Delete this item? This cannot be undone.')) return;
 
     try {
-      // Delete photos first
+      setSaving(true);
+
+      // Delete photos
       for (const photo of photos) {
-        await handleDeletePhoto(photo.id);
+        await offlineStorage.deletePhoto(photo.id);
+        if (isOnline) {
+          await supabase.storage.from('photos').remove([photo.file_path]);
+        }
       }
 
-      // Delete lot from Supabase if online
+      // Delete lot
+      await offlineStorage.upsertLot({ ...lot, id: lotId, deleted: true } as any);
+
       if (isOnline) {
-        const { error } = await supabase
-          .from('lots')
-          .delete()
-          .eq('id', lotId);
-
-        if (error) throw error;
+        await supabase.from('lots').delete().eq('id', lotId);
       }
 
-      // Delete from offline storage
-      if (lotId) {
-        const tx = await offlineStorage['db']!.transaction('lots', 'readwrite');
-        await tx.objectStore('lots').delete(lotId);
-        await tx.done;
-      }
-
-      // Navigate back
       navigate(`/sales/${saleId}`);
     } catch (error) {
       console.error('Error deleting lot:', error);
-      alert('Failed to delete lot');
+      alert('Failed to delete item');
+      setSaving(false);
     }
   };
 
-  // FIXED: Handle both null and undefined to prevent React "value should not be null" warnings
-  // Database fields can return null, which causes controlled input errors
-  const formatPrice = (value: number | null | undefined) => {
-    return value ?? "";  // Uses nullish coalescing to handle both null and undefined
+  const formatPrice = (value: number | undefined | null) => {
+    // Handle both undefined and null (null comes from database NULL fields)
+    if (value === null || value === undefined) return '';
+    return value.toString();
   };
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center pb-20">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading item...</p>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-6 pb-24">
-      {/* Hidden file input for photo upload */}
+      {/* Hidden file inputs */}
       <input
         id="photo-upload"
         type="file"
@@ -681,13 +704,27 @@ Provide only valid JSON, no additional text.`
       />
 
       {/* Lot Number Badge */}
-      <div className="mb-4">
+      <div className="mb-4 flex items-center gap-3 flex-wrap">
         <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-indigo-100 text-indigo-800">
           Lot #{lot.lot_number || 'TBD'}
           {isTemporaryNumber(lot.lot_number) && (
             <span className="ml-2 text-xs text-indigo-600">(Temporary - will assign on sync)</span>
           )}
         </span>
+        
+        {/* Quantity Badge */}
+        {!isNewLot && lot.quantity && lot.quantity > 1 && (
+          <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-700">
+            Qty: {lot.quantity}
+          </span>
+        )}
+        
+        {/* Condition Badge */}
+        {!isNewLot && lot.condition && (
+          <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-800">
+            {lot.condition}
+          </span>
+        )}
       </div>
 
       {/* Photos Section */}
@@ -703,9 +740,7 @@ Provide only valid JSON, no additional text.`
               <ImageIcon className="w-12 h-12 text-gray-400 mx-auto mb-3" />
               <p className="text-gray-500 mb-4">No photos yet</p>
               <p className="text-sm text-gray-400">
-                {CameraService.getPlatformCapabilities().supportsNativeCamera 
-                  ? 'Tap Camera button to take photos'
-                  : 'Click Upload to add photos'}
+                Tap Camera to take a photo or Choose Files to upload
               </p>
             </div>
           ) : (
@@ -726,14 +761,12 @@ Provide only valid JSON, no additional text.`
                     )}
                   </div>
 
-                  {/* Primary Badge */}
                   {photo.is_primary && (
                     <div className="absolute top-2 left-2 bg-indigo-600 text-white px-2 py-1 rounded text-xs font-medium">
                       Primary
                     </div>
                   )}
 
-                  {/* Action Buttons */}
                   <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     {!photo.is_primary && (
                       <button
@@ -789,25 +822,11 @@ Provide only valid JSON, no additional text.`
                 onChange={(e) => setLot({ ...lot, description: e.target.value })}
                 rows={4}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                placeholder="Detailed description of the item, including condition, notable features, and markings"
+                placeholder="Detailed description including condition, provenance, and notable features..."
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Quantity
-                </label>
-                <input
-                  type="number"
-                  value={lot.quantity || 1}
-                  onChange={(e) => setLot({ ...lot, quantity: parseInt(e.target.value) || 1 })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                  min="1"
-                  placeholder="1"
-                />
-              </div>
-
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Condition
@@ -819,14 +838,29 @@ Provide only valid JSON, no additional text.`
                 >
                   <option value="">Select condition</option>
                   <option value="Excellent">Excellent</option>
+                  <option value="Very Good">Very Good</option>
                   <option value="Good">Good</option>
                   <option value="Fair">Fair</option>
                   <option value="Poor">Poor</option>
+                  <option value="As Is">As Is</option>
                 </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Quantity
+                </label>
+                <input
+                  type="number"
+                  value={lot.quantity || 1}
+                  onChange={(e) => setLot({ ...lot, quantity: parseInt(e.target.value) || 1 })}
+                  min="1"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                />
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Category
@@ -1048,6 +1082,182 @@ Provide only valid JSON, no additional text.`
               </div>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* Webcam Modal */}
+      {showCameraModal && (
+        <WebcamModal
+          onCapture={handleCaptureFromWebcam}
+          onClose={() => setShowCameraModal(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// Webcam Modal Component
+function WebcamModal({ onCapture, onClose }: { onCapture: (blob: Blob) => void; onClose: () => void }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [stream, setStream] = useState<MediaStream | null>(null);
+  const [capturedImage, setCapturedImage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    startCamera();
+    return () => {
+      stopCamera();
+    };
+  }, []);
+
+  const startCamera = async () => {
+    try {
+      const mediaStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: 'environment', // Prefer back camera on mobile
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
+        }
+      });
+
+      setStream(mediaStream);
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = mediaStream;
+      }
+    } catch (err) {
+      console.error('Camera access error:', err);
+      setError('Unable to access camera. Please check permissions.');
+    }
+  };
+
+  const stopCamera = () => {
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+    }
+  };
+
+  const capturePhoto = () => {
+    if (!videoRef.current || !canvasRef.current) return;
+
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const context = canvas.getContext('2d');
+
+    if (!context) return;
+
+    // Set canvas size to video size
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+
+    // Draw video frame to canvas
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    // Get image as data URL
+    const imageDataUrl = canvas.toDataURL('image/jpeg', 0.9);
+    setCapturedImage(imageDataUrl);
+
+    // Stop camera
+    stopCamera();
+  };
+
+  const retake = () => {
+    setCapturedImage(null);
+    startCamera();
+  };
+
+  const confirm = () => {
+    if (!capturedImage || !canvasRef.current) return;
+
+    // Convert canvas to blob
+    canvasRef.current.toBlob((blob) => {
+      if (blob) {
+        onCapture(blob);
+      }
+    }, 'image/jpeg', 0.9);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl w-full max-w-2xl overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between p-4 border-b border-gray-200">
+          <h2 className="text-lg font-semibold text-gray-900">
+            {capturedImage ? 'Review Photo' : 'Take Photo'}
+          </h2>
+          <button
+            onClick={onClose}
+            className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-all"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Camera/Preview Area */}
+        <div className="relative bg-black aspect-[4/3]">
+          {error ? (
+            <div className="absolute inset-0 flex items-center justify-center p-8">
+              <div className="text-center">
+                <Camera className="w-12 h-12 text-red-500 mx-auto mb-4" />
+                <p className="text-white text-lg mb-4">{error}</p>
+                <button
+                  onClick={startCamera}
+                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-all"
+                >
+                  <RotateCcw className="w-4 h-4 inline mr-2" />
+                  Try Again
+                </button>
+              </div>
+            </div>
+          ) : capturedImage ? (
+            <img 
+              src={capturedImage} 
+              alt="Captured" 
+              className="w-full h-full object-contain"
+            />
+          ) : (
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              className="w-full h-full object-contain"
+            />
+          )}
+        </div>
+
+        {/* Hidden canvas for capture */}
+        <canvas ref={canvasRef} className="hidden" />
+
+        {/* Controls */}
+        <div className="p-4 bg-gray-50 border-t border-gray-200">
+          {capturedImage ? (
+            <div className="flex gap-3">
+              <button
+                onClick={retake}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-all font-medium"
+              >
+                <RotateCcw className="w-5 h-5" />
+                Retake
+              </button>
+              <button
+                onClick={confirm}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-all font-medium"
+              >
+                <Check className="w-5 h-5" />
+                Use Photo
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={capturePhoto}
+              disabled={!stream || error !== null}
+              className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all font-medium"
+            >
+              <Camera className="w-5 h-5" />
+              Capture Photo
+            </button>
+          )}
         </div>
       </div>
     </div>
