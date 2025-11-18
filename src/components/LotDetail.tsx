@@ -654,8 +654,10 @@ Provide only valid JSON, no additional text.`
     }
   };
 
-  const formatPrice = (value: number | undefined) => {
-    return value !== undefined ? value : '';
+  // FIXED: Handle both null and undefined to prevent React "value should not be null" warnings
+  // Database fields can return null, which causes controlled input errors
+  const formatPrice = (value: number | null | undefined) => {
+    return value ?? "";  // Uses nullish coalescing to handle both null and undefined
   };
 
   if (loading) {
